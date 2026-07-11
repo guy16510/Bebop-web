@@ -17,12 +17,28 @@ import {
 } from './types.js';
 import { MjpegVideoManager } from './video.js';
 import { RawVideoManager, defaultCapturePath } from './raw-video.js';
+import { DEFAULT_SAFETY_CONFIG, SafetyController } from './safety.js';
 
 const log = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 const port = Number(process.env.PORT ?? 3000);
 const commandTimeoutMs = Number(process.env.COMMAND_TIMEOUT_MS ?? 250);
 const commandRateHz = Number(process.env.COMMAND_RATE_HZ ?? 20);
 const maxCommand = Number(process.env.MAX_COMMAND_PERCENT ?? 35);
+
+const safety = new SafetyController({
+  armWindowMs: Number(process.env.ARM_WINDOW_MS ?? DEFAULT_SAFETY_CONFIG.armWindowMs),
+  telemetryWarningMs: Number(process.env.TELEMETRY_WARNING_MS ?? DEFAULT_SAFETY_CONFIG.telemetryWarningMs),
+  telemetryLockoutMs: Number(process.env.TELEMETRY_LOCKOUT_MS ?? DEFAULT_SAFETY_CONFIG.telemetryLockoutMs),
+  minimumTakeoffBatteryPercent: Number(
+    process.env.MINIMUM_TAKEOFF_BATTERY_PERCENT ?? DEFAULT_SAFETY_CONFIG.minimumTakeoffBatteryPercent,
+  ),
+  criticalBatteryPercent: Number(
+    process.env.CRITICAL_BATTERY_PERCENT ?? DEFAULT_SAFETY_CONFIG.criticalBatteryPercent,
+  ),
+  maximumAltitudeMeters: Number(
+    process.env.MAXIMUM_ALTITUDE_METERS ?? DEFAULT_SAFETY_CONFIG.maximumAltitudeMeters,
+  ),
+});
 
 const flyingStates = new Set<FlyingState>([
   'landed',
@@ -264,6 +280,7 @@ app.use(express.json());
 app.use(express.static('public'));
 app.get('/api/health', (_req, res) => res.json({ ok: true, mode: process.env.DRONE_MODE ?? 'simulated' }));
 app.get('/api/state', (_req, res) => res.json(adapter.getSnapshot()));
+app.get('/api/safety', (_req, res) => res.json(safety.getStatus(adapter.getSnapshot())));
 app.get('/api/video/health', (_req, res) => res.json(video.getHealth()));
 app.get('/api/raw-video/health', (_req, res) => res.json(rawVideo.getHealth()));
 app.post('/api/video/start', async (_req, res) => {
@@ -298,6 +315,7 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 let pilot: WebSocket | null = null;
 let desiredCommand = ZERO_COMMAND;
 let lastCommandAt = 0;
+let criticalLandingRequested = false;
 
 const messageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('pilot.acquire') }),
@@ -307,6 +325,8 @@ const messageSchema = z.discriminatedUnion('type', [
   }) }),
   z.object({ type: z.literal('drone.connect') }),
   z.object({ type: z.literal('drone.disconnect') }),
+  z.object({ type: z.literal('drone.arm') }),
+  z.object({ type: z.literal('drone.disarm') }),
   z.object({ type: z.literal('drone.takeoff') }),
   z.object({ type: z.literal('drone.land') }),
   z.object({ type: z.literal('drone.emergency') }),
@@ -321,10 +341,18 @@ function broadcast(payload: unknown) {
   for (const socket of wss.clients) if (socket.readyState === WebSocket.OPEN) socket.send(data);
 }
 
-adapter.onChange((snapshot) => broadcast({ type: 'state', state: snapshot }));
+function broadcastSafety(): void {
+  broadcast({ type: 'safety.status', status: safety.getStatus(adapter.getSnapshot()) });
+}
+
+adapter.onChange((snapshot) => {
+  broadcast({ type: 'state', state: snapshot });
+  broadcastSafety();
+});
 
 wss.on('connection', (socket) => {
   socket.send(JSON.stringify({ type: 'state', state: adapter.getSnapshot() }));
+  socket.send(JSON.stringify({ type: 'safety.status', status: safety.getStatus(adapter.getSnapshot()) }));
   socket.send(JSON.stringify({ type: 'video.health', health: video.getHealth() }));
   socket.send(JSON.stringify({ type: 'raw-video.health', health: rawVideo.getHealth() }));
   socket.on('message', async (raw) => {
@@ -338,19 +366,50 @@ wss.on('connection', (socket) => {
         case 'pilot.release':
           if (pilot === socket) { pilot = null; desiredCommand = ZERO_COMMAND; adapter.stopMovement(); }
           break;
-        case 'pilot.command':
+        case 'pilot.command': {
           if (pilot !== socket) throw new Error('Pilot control not acquired');
-          desiredCommand = clampCommand(message.command, maxCommand);
+          const candidate = clampCommand(message.command, maxCommand);
+          desiredCommand = safety.filterCommand(adapter.getSnapshot(), candidate.active) ? candidate : ZERO_COMMAND;
           lastCommandAt = Date.now();
           break;
-        case 'drone.connect': await adapter.connect(); break;
+        }
+        case 'drone.connect':
+          await adapter.connect();
+          criticalLandingRequested = false;
+          break;
         case 'drone.disconnect':
+          safety.disarm();
+          desiredCommand = ZERO_COMMAND;
           await Promise.allSettled([video.stop(), rawVideo.stop()]);
           await adapter.disconnect();
           break;
-        case 'drone.takeoff': await adapter.takeoff(); break;
-        case 'drone.land': await adapter.land(); break;
-        case 'drone.emergency': await adapter.emergency(); break;
+        case 'drone.arm':
+          safety.arm(adapter.getSnapshot());
+          broadcastSafety();
+          break;
+        case 'drone.disarm':
+          safety.disarm();
+          broadcastSafety();
+          break;
+        case 'drone.takeoff':
+          safety.assertTakeoffAllowed(adapter.getSnapshot());
+          await adapter.takeoff();
+          broadcastSafety();
+          break;
+        case 'drone.land':
+          safety.disarm();
+          desiredCommand = ZERO_COMMAND;
+          adapter.stopMovement();
+          await adapter.land();
+          broadcastSafety();
+          break;
+        case 'drone.emergency':
+          safety.disarm();
+          desiredCommand = ZERO_COMMAND;
+          adapter.stopMovement();
+          await adapter.emergency();
+          broadcastSafety();
+          break;
         case 'video.start': await video.start(); break;
         case 'video.stop': await video.stop(); break;
         case 'raw-video.start':
@@ -371,24 +430,41 @@ wss.on('connection', (socket) => {
     if (pilot === socket) {
       pilot = null;
       desiredCommand = ZERO_COMMAND;
+      safety.disarm();
       adapter.stopMovement();
+      broadcastSafety();
     }
   });
 });
 
 setInterval(() => {
+  const snapshot = adapter.getSnapshot();
   if (!pilot || Date.now() - lastCommandAt > commandTimeoutMs) desiredCommand = ZERO_COMMAND;
-  if (adapter.getSnapshot().connectionState === 'connected') adapter.setPilotingCommand(desiredCommand);
+  if (!safety.filterCommand(snapshot, desiredCommand.active)) desiredCommand = ZERO_COMMAND;
+  if (snapshot.connectionState === 'connected') adapter.setPilotingCommand(desiredCommand);
 }, Math.round(1000 / commandRateHz));
 
-setInterval(() => {
+setInterval(async () => {
+  const snapshot = adapter.getSnapshot();
+  const shouldLand = safety.shouldRequestLanding(snapshot);
+  if (shouldLand && !criticalLandingRequested && snapshot.connectionState === 'connected') {
+    criticalLandingRequested = true;
+    desiredCommand = ZERO_COMMAND;
+    adapter.stopMovement();
+    log.warn({ battery: snapshot.telemetry.battery }, 'Critical battery, requesting landing');
+    await adapter.land().catch((error) => log.error({ error }, 'Critical-battery landing failed'));
+  }
+  if (!shouldLand && snapshot.telemetry.flyingState === 'landed') criticalLandingRequested = false;
+
   broadcast({ type: 'video.health', health: video.getHealth() });
   broadcast({ type: 'raw-video.health', health: rawVideo.getHealth() });
+  broadcastSafety();
 }, 1000);
 
 server.listen(port, () => log.info({ port, mode: process.env.DRONE_MODE ?? 'simulated' }, 'Bebop web server started'));
 
 process.on('SIGINT', async () => {
+  safety.disarm();
   adapter.stopMovement();
   await Promise.allSettled([video.stop(), rawVideo.stop()]);
   await adapter.disconnect().catch(() => undefined);
