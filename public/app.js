@@ -2,6 +2,8 @@ const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}:/
 const keys = new Set();
 let pilot = false;
 let lastState;
+let videoHealth;
+let videoAttached = false;
 
 const $ = (id) => document.getElementById(id);
 const send = (message) => socket.readyState === WebSocket.OPEN && socket.send(JSON.stringify(message));
@@ -12,12 +14,22 @@ socket.addEventListener('message', (event) => {
     lastState = message.state;
     render();
   }
+  if (message.type === 'video.health') {
+    videoHealth = message.health;
+    renderVideo();
+  }
   if (message.type === 'pilot.granted') {
     pilot = true;
     $('pilot-status').textContent = 'Controls acquired';
   }
   if (message.type === 'pilot.denied') $('message').textContent = 'Another browser owns controls';
   if (message.type === 'error') $('message').textContent = message.message;
+});
+
+socket.addEventListener('close', () => {
+  pilot = false;
+  keys.clear();
+  $('pilot-status').textContent = 'Connection closed';
 });
 
 function render() {
@@ -28,6 +40,28 @@ function render() {
   $('altitude').textContent = `${telemetry.altitude.toFixed(2)} m`;
   $('flight-state').textContent = telemetry.flyingState;
   $('telemetry-age').textContent = `${Date.now() - telemetry.updatedAt} ms`;
+}
+
+function renderVideo() {
+  if (!videoHealth) return;
+  $('video-state').textContent = videoHealth.state;
+  $('video-fps').textContent = `${videoHealth.fps.toFixed(1)} fps`;
+  $('video-drops').textContent = `${videoHealth.droppedFrames} dropped`;
+
+  const running = videoHealth.state === 'running';
+  $('video-placeholder').hidden = running;
+  $('video-feed').hidden = !running;
+
+  if (running && !videoAttached) {
+    $('video-feed').src = `/video.mjpeg?ts=${Date.now()}`;
+    videoAttached = true;
+  }
+  if (!running && videoAttached) {
+    $('video-feed').removeAttribute('src');
+    videoAttached = false;
+  }
+
+  if (videoHealth.lastError) $('message').textContent = videoHealth.lastError;
 }
 
 function commandFromKeys() {
@@ -61,12 +95,16 @@ setInterval(() => {
 
 document.querySelectorAll('[data-action]').forEach((button) => {
   button.addEventListener('click', () => {
+    $('message').textContent = '';
     const actions = {
       connect: { type: 'drone.connect' },
+      disconnect: { type: 'drone.disconnect' },
       acquire: { type: 'pilot.acquire' },
       takeoff: { type: 'drone.takeoff' },
       land: { type: 'drone.land' },
       emergency: { type: 'drone.emergency' },
+      'video-start': { type: 'video.start' },
+      'video-stop': { type: 'video.stop' },
     };
     send(actions[button.dataset.action]);
   });
