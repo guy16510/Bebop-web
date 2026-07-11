@@ -1,7 +1,7 @@
 import { createWriteStream, existsSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import type { Readable } from 'node:stream';
+import type { Readable, Writable } from 'node:stream';
 
 export interface RawVideoSource {
   startRawVideo(): Promise<Readable>;
@@ -26,6 +26,7 @@ export class RawVideoManager {
   private capture?: ReturnType<typeof createWriteStream>;
   private gst?: ChildProcessWithoutNullStreams;
   private stopping = false;
+  private blockedOutputs = 0;
   private health: RawVideoHealth = {
     state: 'disabled',
     bytes: 0,
@@ -48,6 +49,7 @@ export class RawVideoManager {
   async start(options: { capturePath?: string; inspectWithGstreamer?: boolean } = {}): Promise<void> {
     if (this.health.state === 'running' || this.health.state === 'starting') return;
     this.stopping = false;
+    this.blockedOutputs = 0;
     this.health = {
       ...this.health,
       state: 'starting',
@@ -78,8 +80,10 @@ export class RawVideoManager {
       this.stream.once('end', this.onEnd);
       this.health.state = 'running';
     } catch (error) {
-      this.fail(error);
+      const message = error instanceof Error ? error.message : String(error);
       await this.stop().catch(() => undefined);
+      this.health.state = 'fault';
+      this.health.lastError = message;
       throw error;
     }
   }
@@ -90,13 +94,18 @@ export class RawVideoManager {
       this.stream.off('data', this.onChunk);
       this.stream.off('error', this.fail);
       this.stream.off('end', this.onEnd);
+      this.stream.pause();
       this.stream = undefined;
     }
     await this.source.stopRawVideo();
     this.capture?.end();
     this.capture = undefined;
-    if (this.gst && !this.gst.killed) this.gst.kill('SIGTERM');
+    if (this.gst && !this.gst.killed) {
+      this.gst.stdin.end();
+      this.gst.kill('SIGTERM');
+    }
     this.gst = undefined;
+    this.blockedOutputs = 0;
     this.health.state = 'disabled';
     this.health.gstreamerPid = null;
   }
@@ -122,8 +131,20 @@ export class RawVideoManager {
       this.health.gstreamerPid = null;
       if (!this.stopping && code !== 0) {
         this.health.gstreamerRestarts += 1;
+        this.health.state = 'fault';
         this.health.lastError = `GStreamer exited with code ${code ?? 'null'}, signal ${signal ?? 'none'}`;
       }
+    });
+  }
+
+  private writeWithBackpressure(output: Writable | undefined, buffer: Buffer): void {
+    if (!output?.writable) return;
+    if (output.write(buffer)) return;
+    this.blockedOutputs += 1;
+    this.stream?.pause();
+    output.once('drain', () => {
+      this.blockedOutputs = Math.max(0, this.blockedOutputs - 1);
+      if (this.blockedOutputs === 0 && !this.stopping) this.stream?.resume();
     });
   }
 
@@ -132,12 +153,8 @@ export class RawVideoManager {
     this.health.bytes += buffer.length;
     this.health.chunks += 1;
     this.health.lastChunkAt = Date.now();
-
-    if (this.capture && !this.capture.write(buffer)) this.stream?.pause();
-    this.capture?.once('drain', () => this.stream?.resume());
-
-    if (this.gst?.stdin.writable && !this.gst.stdin.write(buffer)) this.stream?.pause();
-    this.gst?.stdin.once('drain', () => this.stream?.resume());
+    this.writeWithBackpressure(this.capture, buffer);
+    this.writeWithBackpressure(this.gst?.stdin, buffer);
   };
 
   private fail = (error: unknown): void => {
