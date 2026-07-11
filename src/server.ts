@@ -11,6 +11,7 @@ import {
   ConnectionState,
   DroneAdapter,
   DroneSnapshot,
+  FlyingState,
   PilotingCommand,
   ZERO_COMMAND,
 } from './types.js';
@@ -22,6 +23,19 @@ const port = Number(process.env.PORT ?? 3000);
 const commandTimeoutMs = Number(process.env.COMMAND_TIMEOUT_MS ?? 250);
 const commandRateHz = Number(process.env.COMMAND_RATE_HZ ?? 20);
 const maxCommand = Number(process.env.MAX_COMMAND_PERCENT ?? 35);
+
+const flyingStates = new Set<FlyingState>([
+  'landed',
+  'takingOff',
+  'hovering',
+  'flying',
+  'landing',
+  'emergency',
+]);
+
+function normalizeFlyingState(value: string): FlyingState | null {
+  return flyingStates.has(value as FlyingState) ? (value as FlyingState) : null;
+}
 
 class SimulatedDrone extends EventEmitter implements DroneAdapter {
   private snapshot: DroneSnapshot = {
@@ -178,10 +192,11 @@ class BebopDrone extends EventEmitter implements DroneAdapter {
     this.requireClient();
     if (this.mjpegStream) return this.mjpegStream;
     this.patchVideo('starting');
-    this.mjpegStream = this.client.getMjpegStream();
+    const stream: Readable = this.client.getMjpegStream();
+    this.mjpegStream = stream;
     this.client.MediaStreaming.videoEnable(1);
     this.patchVideo('running');
-    return this.mjpegStream;
+    return stream;
   }
 
   async stopVideo(): Promise<void> {
@@ -193,9 +208,10 @@ class BebopDrone extends EventEmitter implements DroneAdapter {
   async startRawVideo(): Promise<Readable> {
     this.requireClient();
     if (this.rawStream) return this.rawStream;
-    this.rawStream = this.client.getVideoStream();
+    const stream: Readable = this.client.getVideoStream();
+    this.rawStream = stream;
     this.client.MediaStreaming.videoEnable(1);
-    return this.rawStream;
+    return stream;
   }
 
   async stopRawVideo(): Promise<void> {
@@ -216,7 +232,15 @@ class BebopDrone extends EventEmitter implements DroneAdapter {
     };
     this.client.on('battery', (value: number) => { this.snapshot.telemetry.battery = value; update(); });
     this.client.on('altitude', (value: number) => { this.snapshot.telemetry.altitude = value; update(); });
-    this.client.on('flyingState', (value: string) => { this.snapshot.telemetry.flyingState = value; update(); });
+    this.client.on('flyingState', (value: string) => {
+      const state = normalizeFlyingState(value);
+      if (!state) {
+        log.warn({ value }, 'Ignored unknown Bebop flying state');
+        return;
+      }
+      this.snapshot.telemetry.flyingState = state;
+      update();
+    });
   }
 
   private patchConnection(connectionState: ConnectionState) {
