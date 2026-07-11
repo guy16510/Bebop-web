@@ -17,14 +17,23 @@
     </header>
 
     <section class="video">
-      <div class="video-placeholder">
-        <strong>Video pipeline not connected yet</strong>
-        <span>The next milestone will bridge Bebop H.264 through GStreamer/WebRTC.</span>
+      <img id="video-feed" alt="Bebop live camera" />
+      <div id="video-placeholder" class="video-placeholder">
+        <strong>Video stopped</strong>
+        <span>Connect to the drone, then start video.</span>
+      </div>
+      <div class="video-stats">
+        <span id="video-state">disabled</span>
+        <span id="video-fps">0.0 fps</span>
+        <span id="video-drops">0 dropped</span>
       </div>
     </section>
 
     <section class="toolbar">
       <button data-action="connect">Connect</button>
+      <button data-action="disconnect">Disconnect</button>
+      <button data-action="video-start">Start video</button>
+      <button data-action="video-stop">Stop video</button>
       <button data-action="acquire">Acquire controls</button>
       <button data-action="takeoff">Take off</button>
       <button class="land" data-action="land">Land</button>
