@@ -1,6 +1,6 @@
 {
   "name": "bebop-web",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -11,7 +11,8 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "video:inspect": "bash scripts/inspect-h264.sh"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
