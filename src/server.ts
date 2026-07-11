@@ -15,6 +15,7 @@ import {
   ZERO_COMMAND,
 } from './types.js';
 import { MjpegVideoManager } from './video.js';
+import { RawVideoManager, defaultCapturePath } from './raw-video.js';
 
 const log = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 const port = Number(process.env.PORT ?? 3000);
@@ -83,26 +84,13 @@ class SimulatedDrone extends EventEmitter implements DroneAdapter {
     this.emitSnapshot();
   }
 
-  setPilotingCommand(command: PilotingCommand) {
-    this.command = command;
-  }
-
-  stopMovement() {
-    this.command = ZERO_COMMAND;
-  }
-
-  async startVideo(): Promise<Readable> {
-    throw new Error('Simulation video fixture is not configured');
-  }
-
-  async stopVideo(): Promise<void> {
-    this.patch({ videoState: 'disabled' });
-  }
-
-  getSnapshot() {
-    return structuredClone(this.snapshot);
-  }
-
+  setPilotingCommand(command: PilotingCommand) { this.command = command; }
+  stopMovement() { this.command = ZERO_COMMAND; }
+  async startVideo(): Promise<Readable> { throw new Error('Simulation video fixture is not configured'); }
+  async stopVideo(): Promise<void> { this.patch({ videoState: 'disabled' }); }
+  async startRawVideo(): Promise<Readable> { throw new Error('Simulation raw video fixture is not configured'); }
+  async stopRawVideo(): Promise<void> {}
+  getSnapshot() { return structuredClone(this.snapshot); }
   onChange(listener: (snapshot: DroneSnapshot) => void) {
     this.on('change', listener);
     return () => this.off('change', listener);
@@ -128,20 +116,17 @@ class SimulatedDrone extends EventEmitter implements DroneAdapter {
   private requireConnected() {
     if (this.snapshot.connectionState !== 'connected') throw new Error('Drone is not connected');
   }
-
   private patch(patch: Partial<DroneSnapshot>) {
     this.snapshot = { ...this.snapshot, ...patch };
     this.emitSnapshot();
   }
-
-  private emitSnapshot() {
-    this.emit('change', this.getSnapshot());
-  }
+  private emitSnapshot() { this.emit('change', this.getSnapshot()); }
 }
 
 class BebopDrone extends EventEmitter implements DroneAdapter {
   private client: any;
   private mjpegStream?: Readable;
+  private rawStream?: Readable;
   private snapshot: DroneSnapshot = new SimulatedDrone().getSnapshot();
 
   async connect() {
@@ -162,7 +147,7 @@ class BebopDrone extends EventEmitter implements DroneAdapter {
   }
 
   async disconnect() {
-    await this.stopVideo().catch(() => undefined);
+    await Promise.allSettled([this.stopVideo(), this.stopRawVideo()]);
     this.stopMovement();
     this.client?.disconnect?.();
     this.client = undefined;
@@ -200,9 +185,22 @@ class BebopDrone extends EventEmitter implements DroneAdapter {
   }
 
   async stopVideo(): Promise<void> {
-    if (this.client) this.client.MediaStreaming?.videoEnable?.(0);
     this.mjpegStream = undefined;
+    if (!this.rawStream && this.client) this.client.MediaStreaming?.videoEnable?.(0);
     this.patchVideo('disabled');
+  }
+
+  async startRawVideo(): Promise<Readable> {
+    this.requireClient();
+    if (this.rawStream) return this.rawStream;
+    this.rawStream = this.client.getVideoStream();
+    this.client.MediaStreaming.videoEnable(1);
+    return this.rawStream;
+  }
+
+  async stopRawVideo(): Promise<void> {
+    this.rawStream = undefined;
+    if (!this.mjpegStream && this.client) this.client.MediaStreaming?.videoEnable?.(0);
   }
 
   getSnapshot() { return structuredClone(this.snapshot); }
@@ -225,12 +223,10 @@ class BebopDrone extends EventEmitter implements DroneAdapter {
     this.snapshot.connectionState = connectionState;
     this.emit('change', this.getSnapshot());
   }
-
   private patchVideo(videoState: DroneSnapshot['videoState']) {
     this.snapshot.videoState = videoState;
     this.emit('change', this.getSnapshot());
   }
-
   private requireClient() {
     if (!this.client || this.snapshot.connectionState !== 'connected') throw new Error('Drone is not connected');
   }
@@ -238,26 +234,39 @@ class BebopDrone extends EventEmitter implements DroneAdapter {
 
 const adapter: DroneAdapter = process.env.DRONE_MODE === 'bebop' ? new BebopDrone() : new SimulatedDrone();
 const video = new MjpegVideoManager(adapter);
+const rawVideo = new RawVideoManager(adapter);
 const app = express();
 app.use(express.json());
 app.use(express.static('public'));
 app.get('/api/health', (_req, res) => res.json({ ok: true, mode: process.env.DRONE_MODE ?? 'simulated' }));
 app.get('/api/state', (_req, res) => res.json(adapter.getSnapshot()));
 app.get('/api/video/health', (_req, res) => res.json(video.getHealth()));
+app.get('/api/raw-video/health', (_req, res) => res.json(rawVideo.getHealth()));
 app.post('/api/video/start', async (_req, res) => {
-  try {
-    await video.start();
-    res.json(video.getHealth());
-  } catch (error) {
+  try { await video.start(); res.json(video.getHealth()); }
+  catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     log.error({ error: message }, 'Video start failed');
     res.status(500).json({ error: message });
   }
 });
-app.post('/api/video/stop', async (_req, res) => {
-  await video.stop();
-  res.json(video.getHealth());
+app.post('/api/video/stop', async (_req, res) => { await video.stop(); res.json(video.getHealth()); });
+app.post('/api/raw-video/start', async (req, res) => {
+  try {
+    const capture = req.body?.capture !== false;
+    const inspectWithGstreamer = req.body?.inspectWithGstreamer === true;
+    await rawVideo.start({
+      capturePath: capture ? defaultCapturePath() : undefined,
+      inspectWithGstreamer,
+    });
+    res.json(rawVideo.getHealth());
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    log.error({ error: message }, 'Raw video start failed');
+    res.status(500).json({ error: message });
+  }
 });
+app.post('/api/raw-video/stop', async (_req, res) => { await rawVideo.stop(); res.json(rawVideo.getHealth()); });
 app.get('/video.mjpeg', (_req, res) => video.attach(res));
 
 const server = createServer(app);
@@ -279,6 +288,8 @@ const messageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('drone.emergency') }),
   z.object({ type: z.literal('video.start') }),
   z.object({ type: z.literal('video.stop') }),
+  z.object({ type: z.literal('raw-video.start'), capture: z.boolean().optional(), inspectWithGstreamer: z.boolean().optional() }),
+  z.object({ type: z.literal('raw-video.stop') }),
 ]);
 
 function broadcast(payload: unknown) {
@@ -291,6 +302,7 @@ adapter.onChange((snapshot) => broadcast({ type: 'state', state: snapshot }));
 wss.on('connection', (socket) => {
   socket.send(JSON.stringify({ type: 'state', state: adapter.getSnapshot() }));
   socket.send(JSON.stringify({ type: 'video.health', health: video.getHealth() }));
+  socket.send(JSON.stringify({ type: 'raw-video.health', health: rawVideo.getHealth() }));
   socket.on('message', async (raw) => {
     try {
       const message = messageSchema.parse(JSON.parse(raw.toString()));
@@ -308,12 +320,22 @@ wss.on('connection', (socket) => {
           lastCommandAt = Date.now();
           break;
         case 'drone.connect': await adapter.connect(); break;
-        case 'drone.disconnect': await video.stop().catch(() => undefined); await adapter.disconnect(); break;
+        case 'drone.disconnect':
+          await Promise.allSettled([video.stop(), rawVideo.stop()]);
+          await adapter.disconnect();
+          break;
         case 'drone.takeoff': await adapter.takeoff(); break;
         case 'drone.land': await adapter.land(); break;
         case 'drone.emergency': await adapter.emergency(); break;
         case 'video.start': await video.start(); break;
         case 'video.stop': await video.stop(); break;
+        case 'raw-video.start':
+          await rawVideo.start({
+            capturePath: message.capture === false ? undefined : defaultCapturePath(),
+            inspectWithGstreamer: message.inspectWithGstreamer === true,
+          });
+          break;
+        case 'raw-video.stop': await rawVideo.stop(); break;
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
@@ -335,13 +357,16 @@ setInterval(() => {
   if (adapter.getSnapshot().connectionState === 'connected') adapter.setPilotingCommand(desiredCommand);
 }, Math.round(1000 / commandRateHz));
 
-setInterval(() => broadcast({ type: 'video.health', health: video.getHealth() }), 1000);
+setInterval(() => {
+  broadcast({ type: 'video.health', health: video.getHealth() });
+  broadcast({ type: 'raw-video.health', health: rawVideo.getHealth() });
+}, 1000);
 
 server.listen(port, () => log.info({ port, mode: process.env.DRONE_MODE ?? 'simulated' }, 'Bebop web server started'));
 
 process.on('SIGINT', async () => {
   adapter.stopMovement();
-  await video.stop().catch(() => undefined);
+  await Promise.allSettled([video.stop(), rawVideo.stop()]);
   await adapter.disconnect().catch(() => undefined);
   server.close(() => process.exit(0));
 });
