@@ -1,3 +1,5 @@
+import type { Readable } from 'node:stream';
+
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'fault';
 export type FlyingState = 'landed' | 'takingOff' | 'hovering' | 'flying' | 'landing' | 'emergency';
 
@@ -34,6 +36,8 @@ export interface DroneAdapter {
   emergency(): Promise<void>;
   setPilotingCommand(command: PilotingCommand): void;
   stopMovement(): void;
+  startVideo(): Promise<Readable>;
+  stopVideo(): Promise<void>;
   getSnapshot(): DroneSnapshot;
   onChange(listener: (snapshot: DroneSnapshot) => void): () => void;
 }
