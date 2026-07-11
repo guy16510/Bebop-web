@@ -14,6 +14,7 @@ declare module 'node-bebop' {
     counterClockwise(value: number): void;
     up(value: number): void;
     down(value: number): void;
+    getVideoStream(): import('node:stream').Readable;
     getMjpegStream(): import('node:stream').Readable;
     MediaStreaming: { videoEnable(value: 0 | 1): void };
     on(event: string, listener: (...args: any[]) => void): void;
