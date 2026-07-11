@@ -19,14 +19,18 @@ Implemented:
 - Latest-frame-only fanout for slow browser clients
 - Raw H.264 capture from `getVideoStream()`
 - Optional supervised GStreamer decode diagnostics
-- Video health endpoints
+- Server-enforced arm window and takeoff gating
+- Telemetry freshness movement lockout
+- Battery and altitude safety policy
+- One-shot critical-battery landing request
+- Safety status API and browser diagnostics
 - GitHub Actions checks for typecheck, tests, and build
 
 Still pending:
 
 - WebRTC browser delivery
 - Hardware-tested telemetry event mapping
-- Arm and confirmation safety state machine
+- Hold-to-confirm emergency control
 - Measured glass-to-glass latency
 
 ## Requirements
@@ -58,7 +62,40 @@ Simulation mode is the default. Set `DRONE_MODE=bebop` for the physical drone.
 | R / F | Rise / descend |
 | Space | Stop movement |
 
-The browser sends desired state at 20 Hz. The server owns the actual drone command frequency and resets movement after 250 ms without input.
+The browser sends desired state at 20 Hz. The server owns the actual command frequency and resets movement after 250 ms without input.
+
+## Enforced safety behavior
+
+Takeoff is rejected unless all of these are true:
+
+- The drone is connected.
+- Telemetry is fresh.
+- The drone reports `landed`.
+- Battery is above the configured minimum.
+- The operator clicked **Arm** within the active arm window.
+
+The arm state expires automatically and is consumed by a successful takeoff request. It is also cleared on disconnect, landing, emergency, pilot disconnect, and server shutdown.
+
+Active movement commands are replaced with a zero command when telemetry becomes stale or the configured altitude limit is exceeded. At critical battery while airborne, the server sends one landing request and stops movement.
+
+Safety status is available at:
+
+```text
+GET /api/safety
+```
+
+Configuration:
+
+```dotenv
+ARM_WINDOW_MS=10000
+TELEMETRY_WARNING_MS=1000
+TELEMETRY_LOCKOUT_MS=3000
+MINIMUM_TAKEOFF_BATTERY_PERCENT=20
+CRITICAL_BATTERY_PERCENT=10
+MAXIMUM_ALTITUDE_METERS=10
+```
+
+These application safeguards do not replace the drone firmware, the original controller, or normal flight precautions.
 
 ## Real Bebop validation
 
@@ -66,10 +103,14 @@ The browser sends desired state at 20 Hz. The server owns the actual drone comma
 2. Connect the host to the Bebop Wi-Fi network.
 3. Start the server with `DRONE_MODE=bebop npm run dev`.
 4. Click **Connect** and confirm telemetry.
-5. Start MJPEG preview and inspect `/api/video/health`.
-6. Capture raw H.264 using the endpoint below.
-7. Inspect the saved fixture with GStreamer.
-8. Reinstall propellers only after control and disconnect behavior are verified.
+5. Click **Acquire controls**.
+6. Click **Arm** and confirm the countdown appears.
+7. Confirm **Take off** becomes enabled only while the safety checks pass.
+8. Let the arm window expire and verify takeoff becomes disabled.
+9. Start MJPEG preview and inspect `/api/video/health`.
+10. Capture raw H.264 and validate it with GStreamer.
+11. Verify browser disconnect immediately stops movement and disarms.
+12. Reinstall propellers only after all no-propeller tests pass.
 
 ## MJPEG endpoints
 
@@ -118,16 +159,15 @@ The diagnostic GStreamer pipeline is:
 fdsrc -> bounded leaky queue -> h264parse -> avdec_h264 -> fakesink
 ```
 
-This verifies whether the raw stream is decodable without involving the browser or flight-control loop.
-
 ## Architecture
 
 ```text
 Browser
-  | WebSocket controls and telemetry
+  | WebSocket controls, telemetry, and safety status
   | multipart MJPEG preview
 Node.js server
-  | fixed-rate scheduler and watchdog
+  | fixed-rate scheduler and command watchdog
+  | flight safety controller
   | latest-frame-only MJPEG fanout
   | raw H.264 capture and process supervision
 DroneAdapter
@@ -143,14 +183,10 @@ Bebop H.264 -> supervised GStreamer -> WebRTC -> Browser
 
 Node.js supervises and signals the media process. It does not decode full frames on the flight-control event loop.
 
-## Safety limitations
-
-This is experimental software. It does not replace the Bebop firmware failsafes or the original controller. Current code has a movement watchdog and disconnect stop, but it does not yet have complete arm, battery, altitude, telemetry-staleness, and emergency-confirmation protections.
-
 ## Next milestone
 
-1. Validate raw capture format against the physical Bebop 2.
-2. Add a real GStreamer WebRTC pipeline.
-3. Add SDP and ICE signaling through the existing WebSocket server.
-4. Measure MJPEG versus WebRTC latency.
-5. Add full safety-state enforcement before flight testing.
+1. Verify CI after the live safety integration.
+2. Validate telemetry and raw capture against the physical Bebop 2.
+3. Add hold-to-confirm emergency handling.
+4. Add a GStreamer WebRTC pipeline and signaling.
+5. Measure MJPEG versus WebRTC latency.
