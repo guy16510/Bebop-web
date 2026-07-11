@@ -38,6 +38,8 @@ export interface DroneAdapter {
   stopMovement(): void;
   startVideo(): Promise<Readable>;
   stopVideo(): Promise<void>;
+  startRawVideo(): Promise<Readable>;
+  stopRawVideo(): Promise<void>;
   getSnapshot(): DroneSnapshot;
   onChange(listener: (snapshot: DroneSnapshot) => void): () => void;
 }
