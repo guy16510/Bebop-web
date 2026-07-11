@@ -2,6 +2,7 @@ const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}:/
 const keys = new Set();
 let pilot = false;
 let lastState;
+let safetyStatus;
 let videoHealth;
 let videoAttached = false;
 
@@ -13,6 +14,10 @@ socket.addEventListener('message', (event) => {
   if (message.type === 'state') {
     lastState = message.state;
     render();
+  }
+  if (message.type === 'safety.status') {
+    safetyStatus = message.status;
+    renderSafety();
   }
   if (message.type === 'video.health') {
     videoHealth = message.health;
@@ -40,6 +45,28 @@ function render() {
   $('altitude').textContent = `${telemetry.altitude.toFixed(2)} m`;
   $('flight-state').textContent = telemetry.flyingState;
   $('telemetry-age').textContent = `${Date.now() - telemetry.updatedAt} ms`;
+}
+
+function renderSafety() {
+  if (!safetyStatus) return;
+  $('armed').textContent = safetyStatus.armed ? 'Yes' : 'No';
+  $('controls-allowed').textContent = safetyStatus.controlAllowed ? 'Yes' : 'No';
+  $('takeoff-allowed').textContent = safetyStatus.takeoffAllowed ? 'Yes' : 'No';
+  $('takeoff-button').disabled = !safetyStatus.takeoffAllowed;
+
+  if (safetyStatus.armedUntil) {
+    const remaining = Math.max(0, safetyStatus.armedUntil - Date.now());
+    $('arm-expires').textContent = `${(remaining / 1000).toFixed(1)} s`;
+  } else {
+    $('arm-expires').textContent = '--';
+  }
+
+  const warnings = $('safety-warnings');
+  warnings.replaceChildren(...safetyStatus.warnings.map((warning) => {
+    const item = document.createElement('li');
+    item.textContent = warning;
+    return item;
+  }));
 }
 
 function renderVideo() {
@@ -78,7 +105,7 @@ function commandFromKeys() {
 }
 
 addEventListener('keydown', (event) => {
-  if (event.target.matches('input, textarea')) return;
+  if (event.target.matches('input, textarea, button')) return;
   if (event.code === 'Space') {
     event.preventDefault();
     keys.clear();
@@ -91,6 +118,7 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) keys.
 setInterval(() => {
   if (pilot) send({ type: 'pilot.command', command: commandFromKeys() });
   render();
+  renderSafety();
 }, 50);
 
 document.querySelectorAll('[data-action]').forEach((button) => {
@@ -100,12 +128,15 @@ document.querySelectorAll('[data-action]').forEach((button) => {
       connect: { type: 'drone.connect' },
       disconnect: { type: 'drone.disconnect' },
       acquire: { type: 'pilot.acquire' },
+      arm: { type: 'drone.arm' },
+      disarm: { type: 'drone.disarm' },
       takeoff: { type: 'drone.takeoff' },
       land: { type: 'drone.land' },
       emergency: { type: 'drone.emergency' },
       'video-start': { type: 'video.start' },
       'video-stop': { type: 'video.stop' },
     };
-    send(actions[button.dataset.action]);
+    const action = actions[button.dataset.action];
+    if (action) send(action);
   });
 });
