@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bebop Web</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Bebop Web</h1>
+        <p>Local control console for Parrot Bebop 2</p>
+      </div>
+      <span id="connection" class="badge">disconnected</span>
+    </header>
+
+    <section class="video">
+      <div class="video-placeholder">
+        <strong>Video pipeline not connected yet</strong>
+        <span>The next milestone will bridge Bebop H.264 through GStreamer/WebRTC.</span>
+      </div>
+    </section>
+
+    <section class="toolbar">
+      <button data-action="connect">Connect</button>
+      <button data-action="acquire">Acquire controls</button>
+      <button data-action="takeoff">Take off</button>
+      <button class="land" data-action="land">Land</button>
+      <button class="danger" data-action="emergency">Emergency</button>
+    </section>
+
+    <section class="grid">
+      <article>
+        <h2>Telemetry</h2>
+        <dl>
+          <div><dt>Battery</dt><dd id="battery">--</dd></div>
+          <div><dt>Altitude</dt><dd id="altitude">--</dd></div>
+          <div><dt>Flight state</dt><dd id="flight-state">--</dd></div>
+          <div><dt>Telemetry age</dt><dd id="telemetry-age">--</dd></div>
+        </dl>
+      </article>
+      <article>
+        <h2>Controls</h2>
+        <p>W/S pitch, A/D roll, Q/E yaw, R/F rise/fall, Space stop.</p>
+        <div id="pilot-status" class="status">Controls not acquired</div>
+        <pre id="command">roll 0  pitch 0  yaw 0  gaz 0</pre>
+      </article>
+    </section>
+
+    <div id="message" role="status"></div>
+  </main>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
