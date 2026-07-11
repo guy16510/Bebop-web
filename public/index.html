@@ -35,7 +35,9 @@
       <button data-action="video-start">Start video</button>
       <button data-action="video-stop">Stop video</button>
       <button data-action="acquire">Acquire controls</button>
-      <button data-action="takeoff">Take off</button>
+      <button data-action="arm">Arm 10s</button>
+      <button data-action="disarm">Disarm</button>
+      <button id="takeoff-button" data-action="takeoff" disabled>Take off</button>
       <button class="land" data-action="land">Land</button>
       <button class="danger" data-action="emergency">Emergency</button>
     </section>
@@ -49,6 +51,16 @@
           <div><dt>Flight state</dt><dd id="flight-state">--</dd></div>
           <div><dt>Telemetry age</dt><dd id="telemetry-age">--</dd></div>
         </dl>
+      </article>
+      <article>
+        <h2>Safety</h2>
+        <dl>
+          <div><dt>Armed</dt><dd id="armed">No</dd></div>
+          <div><dt>Arm expires</dt><dd id="arm-expires">--</dd></div>
+          <div><dt>Controls allowed</dt><dd id="controls-allowed">No</dd></div>
+          <div><dt>Takeoff allowed</dt><dd id="takeoff-allowed">No</dd></div>
+        </dl>
+        <ul id="safety-warnings"></ul>
       </article>
       <article>
         <h2>Controls</h2>
