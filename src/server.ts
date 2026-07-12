@@ -5,7 +5,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { z } from 'zod';
 import pino from 'pino';
 import { createDroneAdapter } from './drone-adapters.js';
-import { clampCommand, ZERO_COMMAND } from './types.js';
+import { clampCommand, ZERO_COMMAND, type PilotingCommand } from './types.js';
 import { MjpegVideoManager } from './video.js';
 import { RawVideoManager, defaultCapturePath } from './raw-video.js';
 import { DEFAULT_SAFETY_CONFIG, SafetyController } from './safety.js';
@@ -86,12 +86,15 @@ let lastCommandAt = 0;
 let criticalLandingRequested = false;
 let shuttingDown = false;
 
+const sequenceSchema = z.number().int().nonnegative().optional();
 const messageSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('diagnostic.ping'), id: z.number().int().nonnegative() }),
   z.object({ type: z.literal('pilot.acquire') }),
   z.object({ type: z.literal('pilot.release') }),
-  z.object({ type: z.literal('pilot.stop') }),
+  z.object({ type: z.literal('pilot.stop'), sequence: sequenceSchema }),
   z.object({
     type: z.literal('pilot.command'),
+    sequence: sequenceSchema,
     command: z.object({
       roll: z.number(),
       pitch: z.number(),
@@ -138,6 +141,33 @@ function stopPiloting(): void {
   adapter.stopMovement();
 }
 
+function applyDesiredCommandNow(): number {
+  if (adapter.getSnapshot().connectionState !== 'connected') throw new Error('Drone is not connected');
+  adapter.setPilotingCommand(desiredCommand);
+  return Date.now();
+}
+
+function sendPilotAck(
+  socket: WebSocket,
+  sequence: number | undefined,
+  kind: 'command' | 'stop',
+  command: PilotingCommand,
+  accepted: boolean,
+  serverReceivedAt: number,
+  serverAppliedAt: number,
+): void {
+  if (sequence === undefined) return;
+  socket.send(JSON.stringify({
+    type: 'pilot.ack',
+    sequence,
+    kind,
+    command,
+    accepted,
+    serverReceivedAt,
+    serverAppliedAt,
+  }));
+}
+
 adapter.onChange((snapshot) => {
   broadcast({ type: 'state', state: snapshot });
   broadcastSafety();
@@ -153,6 +183,9 @@ wss.on('connection', (socket) => {
     try {
       const message = messageSchema.parse(JSON.parse(raw.toString()));
       switch (message.type) {
+        case 'diagnostic.ping':
+          socket.send(JSON.stringify({ type: 'diagnostic.pong', id: message.id }));
+          break;
         case 'pilot.acquire':
           if (!pilot || pilot.readyState !== WebSocket.OPEN) {
             stopPiloting();
@@ -169,21 +202,34 @@ wss.on('connection', (socket) => {
             broadcastSafety();
           }
           break;
-        case 'pilot.stop':
+        case 'pilot.stop': {
           assertPilot(socket);
+          const serverReceivedAt = Date.now();
           stopPiloting();
+          sendPilotAck(socket, message.sequence, 'stop', ZERO_COMMAND, true, serverReceivedAt, Date.now());
           socket.send(JSON.stringify({ type: 'pilot.stopped' }));
           break;
+        }
         case 'pilot.command': {
           assertPilot(socket);
+          const serverReceivedAt = Date.now();
           const candidate = clampCommand(message.command, maxCommand);
           if (!candidate.active) {
             stopPiloting();
+            sendPilotAck(socket, message.sequence, 'command', ZERO_COMMAND, true, serverReceivedAt, Date.now());
             break;
           }
-          desiredCommand = safety.filterCommand(adapter.getSnapshot(), true) ? candidate : ZERO_COMMAND;
+
+          if (!safety.filterCommand(adapter.getSnapshot(), true)) {
+            stopPiloting();
+            sendPilotAck(socket, message.sequence, 'command', ZERO_COMMAND, false, serverReceivedAt, Date.now());
+            break;
+          }
+
+          desiredCommand = candidate;
           lastCommandAt = Date.now();
-          if (!desiredCommand.active) adapter.stopMovement();
+          const serverAppliedAt = applyDesiredCommandNow();
+          sendPilotAck(socket, message.sequence, 'command', desiredCommand, true, serverReceivedAt, serverAppliedAt);
           break;
         }
         case 'drone.connect':
@@ -260,15 +306,21 @@ wss.on('connection', (socket) => {
 
 setInterval(() => {
   const snapshot = adapter.getSnapshot();
-  if (!pilot || Date.now() - lastCommandAt > commandTimeoutMs) desiredCommand = ZERO_COMMAND;
-  if (!safety.filterCommand(snapshot, desiredCommand.active)) desiredCommand = ZERO_COMMAND;
-  if (snapshot.connectionState !== 'connected') return;
+  const timedOut = !pilot || Date.now() - lastCommandAt > commandTimeoutMs;
+  const blocked = !safety.filterCommand(snapshot, desiredCommand.active);
+
+  if ((timedOut || blocked) && desiredCommand.active) {
+    stopPiloting();
+    return;
+  }
+
+  if (snapshot.connectionState !== 'connected' || !desiredCommand.active) return;
 
   try {
     adapter.setPilotingCommand(desiredCommand);
   } catch (error) {
     stopPiloting();
-    log.error({ error }, 'Failed to apply piloting command');
+    log.error({ error }, 'Failed to refresh piloting command');
   }
 }, Math.round(1000 / commandRateHz));
 
