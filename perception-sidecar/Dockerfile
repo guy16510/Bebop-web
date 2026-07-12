@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglew-dev \
     libjpeg-dev \
     libopencv-dev \
+    libopencv-contrib-dev \
     libpng-dev \
     libssl-dev \
     libswscale-dev \
@@ -29,6 +30,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxkbcommon-dev \
     nlohmann-json3-dev \
     pkg-config \
+    python3 \
+    python3-opencv \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
@@ -78,8 +81,10 @@ COPY perception-sidecar/config/bebop2.example.yaml /config/bebop2.example.yaml
 COPY config/perception/bebop2-upstream-428x240.yaml /config/bebop2-upstream-428x240.yaml
 COPY perception-sidecar/entrypoint.sh /usr/local/bin/perception-entrypoint
 RUN chmod +x /usr/local/bin/perception-entrypoint \
+    /work/perception-sidecar/scripts/apriltag_stream.py \
     && export LD_LIBRARY_PATH=/opt/ORB_SLAM3/lib:/opt/ORB_SLAM3/Thirdparty/DBoW2/lib:/opt/ORB_SLAM3/Thirdparty/g2o/lib:/usr/local/lib \
-    && /usr/local/bin/bebop-perception-sidecar --self-test | grep -q 'perception.snapshot'
+    && /usr/local/bin/bebop-perception-sidecar --self-test | grep -q 'perception.snapshot' \
+    && python3 /work/perception-sidecar/scripts/apriltag_stream.py --self-test | grep -q 'apriltag-7'
 
 ENV ORB_VOCABULARY=/opt/ORB_SLAM3/Vocabulary/ORBvoc.txt \
     ORB_SETTINGS=/config/bebop2.yaml \
@@ -88,6 +93,8 @@ ENV ORB_VOCABULARY=/opt/ORB_SLAM3/Vocabulary/ORBvoc.txt \
     YOLOX_OUTPUT_DECODED=false \
     PERCEPTION_OUTPUT_HZ=10 \
     DETECTION_EVERY_N_FRAMES=3 \
+    LANDING_VISION_OUTPUT_HZ=12 \
+    APRILTAG_EVERY_N_FRAMES=2 \
     LD_LIBRARY_PATH=/opt/ORB_SLAM3/lib:/opt/ORB_SLAM3/Thirdparty/DBoW2/lib:/opt/ORB_SLAM3/Thirdparty/g2o/lib:/usr/local/lib
 
 ENTRYPOINT ["/usr/local/bin/perception-entrypoint"]
