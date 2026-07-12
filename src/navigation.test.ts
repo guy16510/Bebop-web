@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { BebopDrone } from './drone-adapters.js';
 import {
   DEFAULT_NAVIGATION_SETTINGS,
   applyObstacleAvoidance,
@@ -84,6 +85,15 @@ describe('semantic observations', () => {
       notes: '',
     }]);
     expect(observations[0]).toMatchObject({ semanticId: 'dock', name: 'Charging dock', markerId: 7 });
+  });
+
+  it('does not expose simulated GPS or heading through the physical adapter', () => {
+    const logger = { info() {}, warn() {}, error() {} };
+    const snapshot = new BebopDrone(logger).getSnapshot();
+    expect(snapshot.telemetry.gpsFix).toBe(false);
+    expect(snapshot.telemetry.latitude).toBeNull();
+    expect(snapshot.telemetry.longitude).toBeNull();
+    expect(snapshot.telemetry.yaw).toBeNull();
   });
 });
 
