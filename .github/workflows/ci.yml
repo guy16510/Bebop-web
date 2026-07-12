@@ -35,9 +35,39 @@ jobs:
           cat typecheck.log
           exit 1
       - run: npm run check:client
-      - run: npm test
+      - name: Run unit tests
+        id: unit_tests
+        continue-on-error: true
+        run: npm test > unit-tests.log 2>&1
+      - name: Upload unit-test diagnostics
+        if: steps.unit_tests.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-diagnostics
+          path: unit-tests.log
+          retention-days: 2
+      - name: Fail on unit-test errors
+        if: steps.unit_tests.outcome == 'failure'
+        run: |
+          cat unit-tests.log
+          exit 1
       - run: npm run build
-      - run: node scripts/autonomy-smoke.mjs
+      - name: Run autonomy smoke
+        id: autonomy_smoke
+        continue-on-error: true
+        run: node scripts/autonomy-smoke.mjs > autonomy-smoke.log 2>&1
+      - name: Upload autonomy-smoke diagnostics
+        if: steps.autonomy_smoke.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: autonomy-smoke-diagnostics
+          path: autonomy-smoke.log
+          retention-days: 2
+      - name: Fail on autonomy-smoke errors
+        if: steps.autonomy_smoke.outcome == 'failure'
+        run: |
+          cat autonomy-smoke.log
+          exit 1
       - run: node scripts/perception-smoke.mjs
       - run: node scripts/perception-server-smoke.mjs
       - name: Validate calibration and AprilTag script syntax
