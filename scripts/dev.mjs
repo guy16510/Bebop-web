@@ -109,20 +109,23 @@ if (externalPerception) {
   }
 }
 
+const mainPort = Number(process.env.PORT ?? 3000);
+const autonomyPort = Number(process.env.AUTONOMY_PORT ?? mainPort + 1);
 const summary = {
   root: basename(root),
   droneMode,
   perceptionBackend,
   image,
   imageAction,
-  url: `http://localhost:${process.env.PORT ?? 3000}`,
+  url: `http://localhost:${mainPort}`,
+  autonomyUrl: `http://localhost:${autonomyPort}`,
 };
 console.log(`[dev] ${JSON.stringify(summary)}`);
 
 if (dryRun) process.exit(0);
 
 const executable = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-const child = spawn(executable, ['tsx', 'watch', 'src/launcher.ts'], {
+const child = spawn(executable, ['tsx', 'watch', 'src/autonomy-launcher.ts'], {
   cwd: root,
   env: process.env,
   stdio: 'inherit',
