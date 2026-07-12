@@ -38,19 +38,38 @@ jobs:
           tags: bebop-perception-sidecar:ci
           cache-from: type=gha,scope=bebop-perception-sidecar
           cache-to: type=gha,mode=max,scope=bebop-perception-sidecar
-      - name: Execute linked sidecar protocol self-test
+      - name: Execute sidecar protocol and perception engines
         run: |
           docker run --rm bebop-perception-sidecar:ci --self-test > /tmp/sidecar-self-test.json
+          docker run --rm \
+            --entrypoint /usr/local/bin/bebop-perception-engine-self-test \
+            -e ORB_SETTINGS=/config/bebop2.example.yaml \
+            bebop-perception-sidecar:ci > /tmp/engine-self-test.json
           python3 - <<'PY'
           import json
           from pathlib import Path
-          value = json.loads(Path('/tmp/sidecar-self-test.json').read_text())
-          assert value['type'] == 'perception.snapshot'
-          snapshot = value['snapshot']
+
+          protocol = json.loads(Path('/tmp/sidecar-self-test.json').read_text())
+          assert protocol['type'] == 'perception.snapshot'
+          snapshot = protocol['snapshot']
           assert snapshot['backend'] == 'external'
           assert snapshot['source'] == 'orb-slam3-yolox-self-test'
           assert snapshot['trackingState'] == 'tracking'
           assert snapshot['calibrated'] is True
           assert snapshot['map']['bounds']['minX'] < snapshot['map']['bounds']['maxX']
-          print(json.dumps({'ok': True, 'source': snapshot['source']}))
+
+          engines = json.loads(Path('/tmp/engine-self-test.json').read_text())
+          assert engines['ok'] is True
+          assert engines['orbSlam3']['vocabularyLoaded'] is True
+          assert engines['orbSlam3']['systemConstructed'] is True
+          assert engines['orbSlam3']['framesSubmitted'] == 18
+          assert engines['yolox']['modelLoaded'] is True
+          assert engines['yolox']['inferenceExecuted'] is True
+          assert engines['yolox']['outputElements'] > 0
+          print(json.dumps({
+              'ok': True,
+              'source': snapshot['source'],
+              'framesSubmitted': engines['orbSlam3']['framesSubmitted'],
+              'yoloxOutputElements': engines['yolox']['outputElements'],
+          }))
           PY
