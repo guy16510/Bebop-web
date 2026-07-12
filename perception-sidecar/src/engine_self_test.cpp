@@ -11,6 +11,7 @@
 #include <opencv2/core.hpp>
 #include <opencv2/dnn.hpp>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/videoio.hpp>
 
 #include "System.h"
 #include "Tracking.h"
@@ -84,14 +85,28 @@ cv::Mat makeSyntheticFrame(int frameNumber) {
     const int shade = 80 + static_cast<int>((index * 47) % 170);
     const cv::Scalar color(shade, shade, shade);
     cv::circle(frame, cv::Point(u, v), 2, color, -1, cv::LINE_AA);
-    if (point.pattern & 1) cv::line(frame, cv::Point(u - 5, v), cv::Point(u + 5, v), color, 1, cv::LINE_AA);
-    if (point.pattern & 2) cv::line(frame, cv::Point(u, v - 5), cv::Point(u, v + 5), color, 1, cv::LINE_AA);
-    if (point.pattern & 4) cv::line(frame, cv::Point(u - 4, v - 4), cv::Point(u + 4, v + 4), color, 1, cv::LINE_AA);
-    if (point.pattern & 8) cv::line(frame, cv::Point(u - 4, v + 4), cv::Point(u + 4, v - 4), color, 1, cv::LINE_AA);
+    if (point.pattern & 1) {
+      cv::line(frame, cv::Point(u - 5, v), cv::Point(u + 5, v), color, 1,
+               cv::LINE_AA);
+    }
+    if (point.pattern & 2) {
+      cv::line(frame, cv::Point(u, v - 5), cv::Point(u, v + 5), color, 1,
+               cv::LINE_AA);
+    }
+    if (point.pattern & 4) {
+      cv::line(frame, cv::Point(u - 4, v - 4), cv::Point(u + 4, v + 4), color,
+               1, cv::LINE_AA);
+    }
+    if (point.pattern & 8) {
+      cv::line(frame, cv::Point(u - 4, v + 4), cv::Point(u + 4, v - 4), color,
+               1, cv::LINE_AA);
+    }
     ++visible;
   }
 
-  if (visible < 250) throw std::runtime_error("Synthetic replay produced too few visible points");
+  if (visible < 250) {
+    throw std::runtime_error("Synthetic replay produced too few visible points");
+  }
   return frame;
 }
 
@@ -116,6 +131,7 @@ int main() {
     const std::string settings =
         envString("ORB_SETTINGS", "/config/bebop2.example.yaml");
     const std::string model = envString("YOLOX_MODEL", "/models/yolox_tiny.onnx");
+    const std::string videoOutput = envString("SYNTHETIC_VIDEO_OUT", "");
 
     for (const auto& path : {vocabulary, settings, model}) {
       if (!std::filesystem::exists(path) || std::filesystem::file_size(path) == 0) {
@@ -127,7 +143,21 @@ int main() {
     std::ostream protocol(protocolBuffer);
     std::cout.rdbuf(std::cerr.rdbuf());
 
-    ORB_SLAM3::System slam(vocabulary, settings, ORB_SLAM3::System::MONOCULAR, false);
+    cv::VideoWriter writer;
+    if (!videoOutput.empty()) {
+      const std::filesystem::path outputPath(videoOutput);
+      if (outputPath.has_parent_path()) {
+        std::filesystem::create_directories(outputPath.parent_path());
+      }
+      writer.open(videoOutput, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), 30.0,
+                  cv::Size(480, 276));
+      if (!writer.isOpened()) {
+        throw std::runtime_error("Unable to create synthetic replay video: " + videoOutput);
+      }
+    }
+
+    ORB_SLAM3::System slam(vocabulary, settings, ORB_SLAM3::System::MONOCULAR,
+                           false);
     int framesSubmitted = 0;
     bool trackingReached = false;
     std::size_t maxTrackedPoints = 0;
@@ -135,22 +165,32 @@ int main() {
     int finalTrackingState = ORB_SLAM3::Tracking::NO_IMAGES_YET;
     for (int index = 0; index < 120; ++index) {
       cv::Mat frame = makeSyntheticFrame(index);
+      if (writer.isOpened()) writer.write(frame);
       slam.TrackMonocular(frame, index / 30.0);
       ++framesSubmitted;
       finalTrackingState = slam.GetTrackingState();
-      trackingReached = trackingReached || finalTrackingState == ORB_SLAM3::Tracking::OK ||
+      trackingReached = trackingReached ||
+                        finalTrackingState == ORB_SLAM3::Tracking::OK ||
                         finalTrackingState == ORB_SLAM3::Tracking::OK_KLT;
       maxTrackedPoints =
           std::max(maxTrackedPoints, slam.GetTrackedMapPoints().size());
       maxTrackedFeatures =
           std::max(maxTrackedFeatures, slam.GetTrackedKeyPointsUn().size());
     }
+    writer.release();
     slam.Shutdown();
     if (!trackingReached) {
-      throw std::runtime_error("ORB-SLAM3 did not reach tracking on the deterministic replay");
+      throw std::runtime_error(
+          "ORB-SLAM3 did not reach tracking on the deterministic replay");
     }
     if (maxTrackedPoints == 0 || maxTrackedFeatures < 40) {
-      throw std::runtime_error("ORB-SLAM3 tracking produced insufficient features or map points");
+      throw std::runtime_error(
+          "ORB-SLAM3 tracking produced insufficient features or map points");
+    }
+    if (!videoOutput.empty() &&
+        (!std::filesystem::exists(videoOutput) ||
+         std::filesystem::file_size(videoOutput) == 0)) {
+      throw std::runtime_error("Synthetic replay video was not written");
     }
 
     cv::dnn::Net detector = cv::dnn::readNetFromONNX(model);
@@ -161,8 +201,9 @@ int main() {
     detector.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
     cv::Mat detectorInput = makeSyntheticFrame(20);
     cv::resize(detectorInput, detectorInput, cv::Size(416, 416));
-    cv::Mat blob = cv::dnn::blobFromImage(detectorInput, 1.0, cv::Size(416, 416),
-                                          cv::Scalar(), false, false, CV_32F);
+    cv::Mat blob = cv::dnn::blobFromImage(detectorInput, 1.0,
+                                          cv::Size(416, 416), cv::Scalar(), false,
+                                          false, CV_32F);
     detector.setInput(blob);
     cv::Mat output = detector.forward();
     requireFinite(output);
@@ -176,7 +217,9 @@ int main() {
                    {"trackingReached", trackingReached},
                    {"finalTrackingState", finalTrackingState},
                    {"maxTrackedPoints", maxTrackedPoints},
-                   {"maxTrackedFeatures", maxTrackedFeatures}}},
+                   {"maxTrackedFeatures", maxTrackedFeatures},
+                   {"syntheticVideoWritten", !videoOutput.empty()},
+                   {"syntheticVideoPath", videoOutput}}},
                  {"yolox",
                   {{"modelLoaded", true},
                    {"inferenceExecuted", true},
