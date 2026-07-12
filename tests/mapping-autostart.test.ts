@@ -1,19 +1,32 @@
 import { describe, expect, it, vi } from 'vitest';
 import { MappingAutostartCoordinator } from '../src/mapping-autostart.js';
 
+type VideoHealth = {
+  state: 'disabled' | 'starting' | 'running' | 'fault';
+  frames: number;
+  lastFrameAt: number | null;
+  lastError: string | null;
+};
+
+type PerceptionHealth = {
+  state: 'disabled' | 'stopped' | 'starting' | 'running' | 'fault';
+  trackingState: 'disabled' | 'initializing' | 'tracking' | 'lost' | 'fault';
+  lastError: string | null;
+};
+
 function makeHarness() {
   let now = 1_000;
   let connectionState = 'disconnected';
-  let video = {
-    state: 'disabled' as const,
+  let video: VideoHealth = {
+    state: 'disabled',
     frames: 0,
-    lastFrameAt: null as number | null,
-    lastError: null as string | null,
+    lastFrameAt: null,
+    lastError: null,
   };
-  let perception = {
-    state: 'stopped' as const,
-    trackingState: 'disabled' as const,
-    lastError: null as string | null,
+  let perception: PerceptionHealth = {
+    state: 'stopped',
+    trackingState: 'disabled',
+    lastError: null,
   };
   const connect = vi.fn(async () => {
     connectionState = 'connected';
