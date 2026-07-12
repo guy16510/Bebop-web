@@ -128,6 +128,7 @@ const coordinator = new MappingAutostartCoordinator({
   retryMs: Number(process.env.AUTO_START_RETRY_MS ?? 2_000),
   frameTimeoutMs: Number(process.env.AUTO_START_FRAME_TIMEOUT_MS ?? 15_000),
   staleFrameMs: Number(process.env.AUTO_START_STALE_FRAME_MS ?? 5_000),
+  trackingTimeoutMs: Number(process.env.AUTO_START_TRACKING_TIMEOUT_MS ?? 30_000),
   intervalMs: Number(process.env.AUTO_START_POLL_MS ?? 500),
   getConnectionState: () => droneConnectionState,
   connect: async () => {
@@ -144,7 +145,7 @@ const coordinator = new MappingAutostartCoordinator({
     );
   },
   stopVideo: async () => {
-    if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'video.stop' }));
+    await sendCommand('video.stop').catch(() => undefined);
   },
   getPerceptionHealth: () => perceptionHealth,
   startPerception: async () => {
@@ -156,7 +157,7 @@ const coordinator = new MappingAutostartCoordinator({
     );
   },
   stopPerception: async () => {
-    if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'perception.stop' }));
+    await sendCommand('perception.stop').catch(() => undefined);
   },
   onUpdate: (status) => {
     if (status.stage === 'fault' || status.stage === 'recovering') {
