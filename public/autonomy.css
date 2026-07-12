@@ -1,0 +1,183 @@
+.autonomy-card {
+  grid-column: 1 / -1;
+  border-color: #475569;
+}
+
+.autonomy-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.autonomy-heading h2,
+.autonomy-preflight h3 {
+  margin-top: 0;
+}
+
+.autonomy-heading p {
+  max-width: 900px;
+}
+
+.autonomy-banner {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid #475569;
+  border-radius: 8px;
+  background: #0f172a;
+}
+
+.autonomy-banner.ready {
+  border-color: #166534;
+}
+
+.autonomy-banner.blocked,
+.autonomy-error {
+  border-color: #991b1b;
+  color: #fecaca;
+}
+
+.autonomy-toggle-grid,
+.autonomy-settings-grid,
+.autonomy-runtime-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.autonomy-toggle-grid {
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+
+.autonomy-physical {
+  border-color: #9a3412;
+}
+
+.autonomy-settings-grid {
+  grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+  margin-top: 12px;
+}
+
+.autonomy-settings-grid label,
+.autonomy-confirm {
+  display: grid;
+  gap: 5px;
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.autonomy-settings-grid input,
+.autonomy-settings-grid select,
+.autonomy-confirm input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 10px;
+  border: 1px solid #475569;
+  border-radius: 7px;
+  background: #020617;
+  color: #f8fafc;
+}
+
+.autonomy-save-row,
+.autonomy-launch-row {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.autonomy-save-row span {
+  color: #94a3b8;
+}
+
+.autonomy-runtime-grid {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  margin-top: 14px;
+}
+
+.autonomy-runtime-grid > div {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #020617;
+}
+
+.autonomy-runtime-grid span,
+#autonomy-readiness small {
+  color: #94a3b8;
+}
+
+.autonomy-preflight {
+  margin-top: 16px;
+}
+
+#autonomy-readiness {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 8px;
+  padding: 0;
+  list-style: none;
+}
+
+#autonomy-readiness li {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  column-gap: 7px;
+  padding: 9px;
+  border: 1px solid #475569;
+  border-radius: 8px;
+  background: #020617;
+}
+
+#autonomy-readiness li span {
+  grid-row: 1 / 3;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+#autonomy-readiness li.ready {
+  border-color: #166534;
+}
+
+#autonomy-readiness li.ready span {
+  color: #4ade80;
+}
+
+#autonomy-readiness li.blocked {
+  border-color: #7f1d1d;
+}
+
+#autonomy-readiness li.blocked span {
+  color: #f87171;
+}
+
+.autonomy-confirm {
+  min-width: 285px;
+  flex: 1;
+}
+
+.autonomy-error {
+  margin-bottom: 0;
+  padding: 10px;
+  border: 1px solid #991b1b;
+  border-radius: 8px;
+  background: #450a0a;
+}
+
+@media (max-width: 760px) {
+  .autonomy-card {
+    grid-column: auto;
+  }
+
+  .autonomy-heading {
+    display: grid;
+  }
+
+  .autonomy-launch-row button,
+  .autonomy-save-row button,
+  .autonomy-confirm {
+    width: 100%;
+  }
+}
