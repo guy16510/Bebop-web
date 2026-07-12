@@ -126,6 +126,7 @@ class InteractiveSlamMap {
     this.trajectory = svgElement('path', 'slam-trajectory');
     this.start = svgElement('circle', 'slam-trajectory-start');
     this.objects = svgElement('g', 'slam-objects');
+    this.navigationPadsLayer = svgElement('g', 'slam-navigation-pads');
     this.drone = svgElement('g', 'slam-drone-group');
     this.droneHeading = svgElement('line', 'slam-drone-heading');
     this.droneShape = svgElement('path', 'slam-drone');
@@ -137,7 +138,15 @@ class InteractiveSlamMap {
     this.droneHeading.setAttribute('y2', '0');
     this.droneShape.setAttribute('d', 'M 13 0 L -9 -8 L -5 0 L -9 8 Z');
     this.drone.append(this.droneHeading, this.droneShape);
-    this.viewport.append(this.grid, this.landmarks, this.trajectory, this.start, this.objects, this.drone);
+    this.viewport.append(
+      this.grid,
+      this.landmarks,
+      this.trajectory,
+      this.start,
+      this.objects,
+      this.navigationPadsLayer,
+      this.drone,
+    );
     svg.replaceChildren(this.background, this.viewport, this.empty);
 
     this.scale = 1;
@@ -152,6 +161,7 @@ class InteractiveSlamMap {
     this.project = null;
     this.projectedLandmarks = [];
     this.projectedObjects = [];
+    this.navigationPads = [];
     this.lastSnapshot = null;
     this.bindEvents();
   }
@@ -249,6 +259,11 @@ class InteractiveSlamMap {
     this.objects.style.display = this.layers.objects ? '' : 'none';
   }
 
+  setNavigationPads(pads) {
+    this.navigationPads = Array.isArray(pads) ? pads : [];
+    this.renderNavigationPads();
+  }
+
   render(snapshot) {
     this.lastSnapshot = snapshot;
     const rect = this.svg.getBoundingClientRect();
@@ -288,6 +303,7 @@ class InteractiveSlamMap {
     this.renderLandmarks(snapshot.map.landmarks);
     this.renderTrajectory(snapshot.trajectory);
     this.renderObjects(snapshot.detections);
+    this.renderNavigationPads();
     this.renderDrone(snapshot.pose);
     this.applyLayerVisibility();
 
@@ -383,6 +399,31 @@ class InteractiveSlamMap {
       return group;
     });
     this.objects.replaceChildren(...groups);
+  }
+
+  renderNavigationPads() {
+    if (!this.project) {
+      this.navigationPadsLayer.replaceChildren();
+      return;
+    }
+    const groups = this.navigationPads
+      .filter((pad) => pad?.mapPosition)
+      .map((pad) => {
+        const point = this.project(pad.mapPosition);
+        const group = svgElement('g', 'slam-navigation-pad');
+        group.setAttribute('transform', `translate(${point.x} ${point.y})`);
+        const ring = svgElement('circle');
+        ring.setAttribute('r', '10');
+        const center = svgElement('circle');
+        center.setAttribute('r', '3');
+        const text = svgElement('text');
+        text.setAttribute('x', '13');
+        text.setAttribute('y', '-9');
+        text.textContent = `${pad.name}, tag ${pad.markerId}`;
+        group.append(ring, center, text);
+        return group;
+      });
+    this.navigationPadsLayer.replaceChildren(...groups);
   }
 
   renderDrone(pose) {
@@ -494,6 +535,9 @@ function drawDetections() {
 }
 
 const slamMap = new InteractiveSlamMap($('slam-map'));
+globalThis.addEventListener('bebop-navigation-pads', (event) => {
+  slamMap.setNavigationPads(event.detail);
+});
 window.addEventListener('resize', queueRender);
 setButtons(false);
 slamMap.updateFollowButton();
