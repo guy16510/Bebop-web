@@ -40,6 +40,8 @@ interface MjpegSession {
 
 const DEFAULT_START_TIMEOUT_MS = 8000;
 const MAX_SUBSCRIBER_BUFFER_BYTES = 4 * 1024 * 1024;
+const H264_ANALYZE_DURATION_US = '5000000';
+const H264_PROBE_SIZE_BYTES = '5000000';
 
 export function createArStream2DiscoveryRequest(options: ArStream2DiscoveryOptions): string {
   return JSON.stringify({
@@ -266,6 +268,17 @@ export class BebopArStream2Video {
 
   private async startRawProcess(): Promise<void> {
     this.rawStderr = '';
+
+    // ARStream2 can remain enabled after a previous consumer disconnects. In
+    // that case a new receiver joins between keyframes and sees slices before
+    // the SPS/PPS needed to decode them. Reset streaming before opening the
+    // receiver so enabling it below starts a fresh H.264 sequence.
+    try {
+      this.options.disableVideo();
+    } catch {
+      // The first start may occur before the command channel is fully ready.
+    }
+
     const process = spawn(this.ffmpegBin, this.rawArgs(), { stdio: ['pipe', 'pipe', 'pipe'] });
     this.rawProcess = process;
     this.rawStarted = false;
@@ -382,8 +395,11 @@ export class BebopArStream2Video {
       '-protocol_whitelist', 'file,udp,rtp,pipe',
       '-fflags', 'nobuffer',
       '-flags', 'low_delay',
-      '-analyzeduration', '0',
-      '-probesize', '32768',
+      // A Bebop receiver may attach between keyframes. Give FFmpeg enough
+      // input to reach the next SPS/PPS instead of failing with dimensions not
+      // set after the first undecodable slices.
+      '-analyzeduration', H264_ANALYZE_DURATION_US,
+      '-probesize', H264_PROBE_SIZE_BYTES,
       '-f', 'sdp',
       '-i', 'pipe:0',
       '-map', '0:v:0',
@@ -395,23 +411,27 @@ export class BebopArStream2Video {
   }
 
   private mjpegArgs(): string[] {
-    const width = this.options.mjpegWidth ?? 640;
-    const height = this.options.mjpegHeight ?? 368;
-    const quality = this.options.mjpegQuality ?? 3;
+    const width = this.options.mjpegWidth ?? 480;
+    const height = this.options.mjpegHeight ?? 276;
+    const quality = this.options.mjpegQuality ?? 5;
     return [
       '-hide_banner',
       '-loglevel', 'warning',
       '-fflags', 'nobuffer',
       '-flags', 'low_delay',
-      '-analyzeduration', '0',
-      '-probesize', '32768',
+      '-analyzeduration', H264_ANALYZE_DURATION_US,
+      '-probesize', H264_PROBE_SIZE_BYTES,
       '-f', 'h264',
       '-i', 'pipe:0',
       '-map', '0:v:0',
       '-an',
+      '-sws_flags', 'fast_bilinear',
       '-vf', `scale=${width}:${height}`,
       '-c:v', 'mjpeg',
       '-q:v', String(quality),
+      // Do not let FFmpeg's guessed input rate silently reduce the number of
+      // frames delivered by the drone.
+      '-fps_mode', 'passthrough',
       '-f', 'image2pipe',
       'pipe:1',
     ];

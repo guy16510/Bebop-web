@@ -47,6 +47,13 @@
         <h2>Telemetry</h2>
         <dl>
           <div><dt>Battery</dt><dd id="battery">--</dd></div>
+          <div>
+            <dt>Wi-Fi signal</dt>
+            <dd class="signal-reading">
+              <span class="signal-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+              <span id="signal">--</span>
+            </dd>
+          </div>
           <div><dt>Altitude</dt><dd id="altitude">--</dd></div>
           <div><dt>Flight state</dt><dd id="flight-state">--</dd></div>
           <div><dt>Telemetry age</dt><dd id="telemetry-age">--</dd></div>
@@ -67,6 +74,23 @@
         <p>W/S pitch, A/D roll, Q/E yaw, R/F rise/fall, Space stop.</p>
         <div id="pilot-status" class="status">Controls not acquired</div>
         <pre id="command">roll 0  pitch 0  yaw 0  gaz 0</pre>
+        <div class="flight-controls" aria-label="Drone movement controls">
+          <div class="control-pad direction-pad">
+            <button class="move forward" data-control="forward" aria-label="Move forward">▲</button>
+            <button class="move left" data-control="left" aria-label="Move left">◀</button>
+            <button class="move stop" data-control="stop" aria-label="Stop movement">■</button>
+            <button class="move right" data-control="right" aria-label="Move right">▶</button>
+            <button class="move backward" data-control="backward" aria-label="Move backward">▼</button>
+          </div>
+          <div class="control-column">
+            <button class="move" data-control="up">Up</button>
+            <button class="move" data-control="down">Down</button>
+          </div>
+          <div class="control-column">
+            <button class="move" data-control="yaw-left">↶ Yaw</button>
+            <button class="move" data-control="yaw-right">Yaw ↷</button>
+          </div>
+        </div>
       </article>
     </section>
 

@@ -13,6 +13,7 @@ export interface PilotingCommand {
 
 export interface DroneTelemetry {
   battery: number;
+  signalRssi?: number | null;
   altitude: number;
   speedX: number;
   speedY: number;

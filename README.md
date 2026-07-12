@@ -123,6 +123,10 @@ GET  /video.mjpeg
 
 MJPEG is the compatibility preview. Each browser has an effective one-frame buffer, so slow viewers drop old frames rather than accumulating latency.
 
+The preview defaults to `480x276` with FFmpeg MJPEG quality `5` to keep encoding
+latency low. Override these with `VIDEO_MJPEG_WIDTH`, `VIDEO_MJPEG_HEIGHT`, and
+`VIDEO_MJPEG_QUALITY` (1 is highest quality, 31 is fastest/lowest quality).
+
 ## Raw H.264 capture
 
 Start capture and optionally pipe the same stream through GStreamer:

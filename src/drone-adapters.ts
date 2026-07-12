@@ -40,6 +40,7 @@ export class SimulatedDrone extends EventEmitter implements DroneAdapter {
     videoState: 'disabled',
     telemetry: {
       battery: 100,
+      signalRssi: -45,
       altitude: 0,
       speedX: 0,
       speedY: 0,
@@ -283,6 +284,9 @@ export class BebopDrone extends EventEmitter implements DroneAdapter {
     const streamPort = numberFromEnv('BEBOP_ARSTREAM2_STREAM_PORT', 55004);
     const controlPort = numberFromEnv('BEBOP_ARSTREAM2_CONTROL_PORT', 55005);
     const startTimeoutMs = numberFromEnv('VIDEO_START_TIMEOUT_MS', 8000);
+    const mjpegWidth = numberFromEnv('VIDEO_MJPEG_WIDTH', 480);
+    const mjpegHeight = numberFromEnv('VIDEO_MJPEG_HEIGHT', 276);
+    const mjpegQuality = numberFromEnv('VIDEO_MJPEG_QUALITY', 5, 31);
     const droneIp = String(this.client.ip ?? process.env.BEBOP_IP ?? '192.168.42.1');
 
     installArStream2Discovery(this.client, {
@@ -297,6 +301,9 @@ export class BebopDrone extends EventEmitter implements DroneAdapter {
       controlPort,
       ffmpegBin: process.env.FFMPEG_BIN ?? 'ffmpeg',
       startTimeoutMs,
+      mjpegWidth,
+      mjpegHeight,
+      mjpegQuality,
       enableVideo: () => this.client?.MediaStreaming?.videoEnable?.(1),
       disableVideo: () => this.client?.MediaStreaming?.videoEnable?.(0),
     });
@@ -327,6 +334,12 @@ export class BebopDrone extends EventEmitter implements DroneAdapter {
 
     this.client.on('battery', (value: number) => {
       this.snapshot.telemetry.battery = value;
+      update();
+    });
+    this.client.on('WifiSignalChanged', (event: { rssi?: number } | number) => {
+      const rssi = typeof event === 'number' ? event : event?.rssi;
+      if (typeof rssi !== 'number' || !Number.isFinite(rssi)) return;
+      this.snapshot.telemetry.signalRssi = rssi;
       update();
     });
     this.client.on('altitude', (value: number) => {
@@ -379,10 +392,10 @@ export function createDroneAdapter(mode: string | undefined, log: AdapterLogger)
   return mode === 'bebop' ? new BebopDrone(log) : new SimulatedDrone();
 }
 
-function numberFromEnv(name: string, fallback: number): number {
+function numberFromEnv(name: string, fallback: number, maximum = 65535): number {
   const value = Number(process.env[name] ?? fallback);
-  if (!Number.isInteger(value) || value <= 0 || value > 65535) {
-    throw new Error(`${name} must be a valid TCP/UDP port`);
+  if (!Number.isInteger(value) || value <= 0 || value > maximum) {
+    throw new Error(`${name} must be an integer between 1 and ${maximum}`);
   }
   return value;
 }

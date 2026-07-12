@@ -1,5 +1,6 @@
 const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
 const keys = new Set();
+const heldControls = new Set();
 let pilot = false;
 let lastState;
 let safetyStatus;
@@ -42,9 +43,19 @@ function render() {
   const telemetry = lastState.telemetry;
   $('connection').textContent = lastState.connectionState;
   $('battery').textContent = `${telemetry.battery.toFixed(0)}%`;
+  renderSignal(telemetry.signalRssi);
   $('altitude').textContent = `${telemetry.altitude.toFixed(2)} m`;
   $('flight-state').textContent = telemetry.flyingState;
   $('telemetry-age').textContent = `${Date.now() - telemetry.updatedAt} ms`;
+}
+
+function renderSignal(rssi) {
+  const value = typeof rssi === 'number' ? rssi : null;
+  const strength = value === null ? 0 : value >= -50 ? 4 : value >= -60 ? 3 : value >= -70 ? 2 : 1;
+  $('signal').textContent = value === null ? '--' : `${value.toFixed(0)} dBm`;
+  document.querySelectorAll('.signal-bars i').forEach((bar, index) => {
+    bar.classList.toggle('active', index < strength);
+  });
 }
 
 function renderSafety() {
@@ -94,11 +105,11 @@ function renderVideo() {
 function commandFromKeys() {
   const amount = 30;
   const command = {
-    pitch: (keys.has('w') ? amount : 0) + (keys.has('s') ? -amount : 0),
-    roll: (keys.has('d') ? amount : 0) + (keys.has('a') ? -amount : 0),
-    yaw: (keys.has('e') ? amount : 0) + (keys.has('q') ? -amount : 0),
-    gaz: (keys.has('r') ? amount : 0) + (keys.has('f') ? -amount : 0),
-    active: keys.size > 0,
+    pitch: ((keys.has('w') || heldControls.has('forward')) ? amount : 0) + ((keys.has('s') || heldControls.has('backward')) ? -amount : 0),
+    roll: ((keys.has('d') || heldControls.has('right')) ? amount : 0) + ((keys.has('a') || heldControls.has('left')) ? -amount : 0),
+    yaw: ((keys.has('e') || heldControls.has('yaw-right')) ? amount : 0) + ((keys.has('q') || heldControls.has('yaw-left')) ? -amount : 0),
+    gaz: ((keys.has('r') || heldControls.has('up')) ? amount : 0) + ((keys.has('f') || heldControls.has('down')) ? -amount : 0),
+    active: keys.size > 0 || heldControls.size > 0,
   };
   $('command').textContent = `roll ${command.roll}  pitch ${command.pitch}  yaw ${command.yaw}  gaz ${command.gaz}`;
   return command;
@@ -113,7 +124,34 @@ addEventListener('keydown', (event) => {
 });
 addEventListener('keyup', (event) => keys.delete(event.key.toLowerCase()));
 addEventListener('blur', () => keys.clear());
-document.addEventListener('visibilitychange', () => { if (document.hidden) keys.clear(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    keys.clear();
+    heldControls.clear();
+  }
+});
+
+document.querySelectorAll('[data-control]').forEach((button) => {
+  const control = button.dataset.control;
+  if (control === 'stop') {
+    button.addEventListener('click', () => {
+      keys.clear();
+      heldControls.clear();
+      if (pilot) send({ type: 'pilot.command', command: commandFromKeys() });
+    });
+    return;
+  }
+
+  const release = () => heldControls.delete(control);
+  button.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    button.setPointerCapture(event.pointerId);
+    heldControls.add(control);
+  });
+  button.addEventListener('pointerup', release);
+  button.addEventListener('pointercancel', release);
+  button.addEventListener('lostpointercapture', release);
+});
 
 setInterval(() => {
   if (pilot) send({ type: 'pilot.command', command: commandFromKeys() });
