@@ -3,6 +3,7 @@ import { BebopDrone } from './drone-adapters.js';
 import {
   DEFAULT_NAVIGATION_SETTINGS,
   applyObstacleAvoidance,
+  applyOnboardVisionGuard,
   gpsGuidance,
   gpsOffsetMeters,
   landingGuidance,
@@ -11,6 +12,7 @@ import {
   resolveSemanticObservations,
   type LandingPadDefinition,
   type RangeField,
+  type SemanticObservation,
 } from './navigation.js';
 import type { DroneSnapshot } from './types.js';
 
@@ -143,6 +145,67 @@ describe('obstacle avoidance', () => {
     const result = applyObstacleAvoidance(forward, stale, DEFAULT_NAVIGATION_SETTINGS, now);
     expect(result.blocked).toBe(true);
     expect(result.command.active).toBe(false);
+  });
+});
+
+
+describe('onboard camera obstacle guard', () => {
+  const visible = (bbox: SemanticObservation['bbox'], name = 'Person'): SemanticObservation => ({
+    trackId: name.toLowerCase(),
+    semanticId: null,
+    name,
+    label: name.toLowerCase(),
+    behavior: 'obstacle',
+    confidence: 0.9,
+    bbox,
+    clearanceMeters: 2,
+    markerId: null,
+    firstSeenAt: now - 100,
+    lastSeenAt: now,
+  });
+
+  it('caps forward speed when only onboard vision is available', () => {
+    const result = applyOnboardVisionGuard(
+      { ...forward, pitch: 18 },
+      [],
+      DEFAULT_NAVIGATION_SETTINGS,
+      now,
+    );
+    expect(result.blocked).toBe(false);
+    expect(result.command.pitch).toBe(DEFAULT_NAVIGATION_SETTINGS.onboardCruiseCommandPercent);
+  });
+
+  it('stops for a large visible hazard in the forward corridor', () => {
+    const result = applyOnboardVisionGuard(
+      forward,
+      [visible({ x: 0.3, y: 0.2, width: 0.4, height: 0.5 })],
+      DEFAULT_NAVIGATION_SETTINGS,
+      now,
+    );
+    expect(result.blocked).toBe(true);
+    expect(result.command.active).toBe(false);
+  });
+
+  it('does not allow blind reverse translation', () => {
+    const result = applyOnboardVisionGuard(
+      { ...forward, pitch: -6 },
+      [],
+      DEFAULT_NAVIGATION_SETTINGS,
+      now,
+    );
+    expect(result.blocked).toBe(true);
+    expect(result.reason).toContain('Rear translation');
+  });
+
+  it('ignores a small hazard outside the configured image corridor', () => {
+    const result = applyOnboardVisionGuard(
+      forward,
+      [visible({ x: 0.01, y: 0.1, width: 0.08, height: 0.08 }, 'Chair')],
+      DEFAULT_NAVIGATION_SETTINGS,
+      now,
+    );
+    expect(result.blocked).toBe(false);
+    expect(result.command.pitch).toBe(DEFAULT_NAVIGATION_SETTINGS.onboardCruiseCommandPercent);
   });
 });
 

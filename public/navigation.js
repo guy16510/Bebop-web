@@ -26,8 +26,14 @@ function injectNavigationDashboard() {
     <section class="navigation-section">
       <h3>Obstacle avoidance</h3>
       <form id="navigation-settings-form" class="navigation-settings-grid">
-        <label class="feature-toggle"><span><strong>Enable avoidance</strong><small>Filter autonomous translation through fresh range sectors.</small></span><input id="navigation-avoidance" type="checkbox" /></label>
-        <label class="feature-toggle"><span><strong>Require metric range</strong><small>Block movement instead of guessing distance from a monocular image.</small></span><input id="navigation-require-range" type="checkbox" /></label>
+        <label class="feature-toggle"><span><strong>Enable avoidance</strong><small>Use metric range when connected, otherwise use the conservative onboard-camera guard.</small></span><input id="navigation-avoidance" type="checkbox" /></label>
+        <label class="feature-toggle"><span><strong>Prefer metric range</strong><small>Metric range overrides vision whenever fresh sensor sectors are available.</small></span><input id="navigation-require-range" type="checkbox" /></label>
+        <label class="feature-toggle"><span><strong>Use onboard camera fallback</strong><small>Slow or stop for visible recognized hazards. This cannot see behind, above, glass, wires, or unknown objects.</small></span><input id="navigation-onboard-vision" type="checkbox" /></label>
+        <label>Onboard max cruise, %<input id="navigation-onboard-cruise" type="number" min="3" max="10" step="1" /></label>
+        <label>Visual minimum confidence<input id="navigation-visual-confidence" type="number" min="0.1" max="0.99" step="0.05" /></label>
+        <label>Visual caution image ratio<input id="navigation-visual-caution" type="number" min="0.005" max="0.25" step="0.005" /></label>
+        <label>Visual stop image ratio<input id="navigation-visual-stop" type="number" min="0.01" max="0.5" step="0.005" /></label>
+        <label>Visual corridor width<input id="navigation-visual-corridor" type="number" min="0.2" max="1" step="0.05" /></label>
         <label>Hard stop, m<input id="navigation-stop-distance" type="number" min="0.25" max="10" step="0.05" /></label>
         <label>Caution distance, m<input id="navigation-caution-distance" type="number" min="0.35" max="20" step="0.05" /></label>
         <label>Range timeout, ms<input id="navigation-range-timeout" type="number" min="100" max="5000" step="50" /></label>
@@ -41,7 +47,7 @@ function injectNavigationDashboard() {
         <button type="submit">Save navigation limits</button>
       </form>
       <div class="range-panel">
-        <div><span>Source</span><strong id="range-source">--</strong></div>
+        <div><span>Active guard</span><strong id="range-source">--</strong></div>
         <div><span>Fresh</span><strong id="range-fresh">No</strong></div>
         <div><span>Front left</span><strong id="range-front-left">--</strong></div>
         <div><span>Front</span><strong id="range-front">--</strong></div>
@@ -51,7 +57,7 @@ function injectNavigationDashboard() {
         <div><span>Rear</span><strong id="range-rear">--</strong></div>
         <div><span>Down</span><strong id="range-down">--</strong></div>
       </div>
-      <p class="navigation-note">Range sensors post to <code>/api/navigation/ranges</code> on the autonomy port. The server stops autonomous translation when required data becomes stale.</p>
+      <p class="navigation-note">Fresh ToF or LiDAR data is preferred. Without it, the onboard camera guard only reacts to visible recognized hazards in the forward image corridor and caps translation speed.</p>
     </section>
 
     <section class="navigation-section navigation-two-column">
@@ -147,6 +153,12 @@ function rangeText(range, name) {
 function populateSettings(settings) {
   $('navigation-avoidance').checked = settings.obstacleAvoidanceEnabled;
   $('navigation-require-range').checked = settings.requireMetricRange;
+  $('navigation-onboard-vision').checked = settings.onboardVisionFallbackEnabled;
+  $('navigation-onboard-cruise').value = settings.onboardCruiseCommandPercent;
+  $('navigation-visual-confidence').value = settings.visualMinimumConfidence;
+  $('navigation-visual-caution').value = settings.visualCautionAreaRatio;
+  $('navigation-visual-stop').value = settings.visualStopAreaRatio;
+  $('navigation-visual-corridor').value = settings.visualCorridorWidth;
   $('navigation-stop-distance').value = settings.stopDistanceMeters;
   $('navigation-caution-distance').value = settings.cautionDistanceMeters;
   $('navigation-range-timeout').value = settings.rangeTimeoutMs;
@@ -225,11 +237,21 @@ function render() {
   if (!lastStatus?.navigation) return;
   const navigation = lastStatus.navigation;
   const active = Boolean(lastStatus.active);
-  $('navigation-state').textContent = navigation.rangeFresh ? 'range ready' : 'range unavailable';
-  $('navigation-state').className = `status ${navigation.rangeFresh ? 'status-ready' : 'status-blocked'}`;
+  const source = navigation.avoidanceSource ?? (navigation.rangeFresh ? 'metric-range' : 'none');
+  const sourceReady = source !== 'none';
+  $('navigation-state').textContent = source === 'metric-range'
+    ? 'metric guard'
+    : source === 'onboard-vision'
+      ? 'onboard vision guard'
+      : 'avoidance unavailable';
+  $('navigation-state').className = `status ${sourceReady ? 'status-ready' : 'status-blocked'}`;
   if (!saving && !active) populateSettings(navigation.map.settings);
 
-  $('range-source').textContent = navigation.rangeField?.source ?? '--';
+  $('range-source').textContent = source === 'metric-range'
+    ? navigation.rangeField?.source ?? 'metric range'
+    : source === 'onboard-vision'
+      ? 'onboard camera + SLAM'
+      : '--';
   $('range-fresh').textContent = navigation.rangeFresh ? 'Yes' : 'No';
   $('range-front-left').textContent = rangeText(navigation.rangeField, 'frontLeft');
   $('range-front').textContent = rangeText(navigation.rangeField, 'front');
@@ -261,6 +283,12 @@ function bindControls() {
         body: {
           obstacleAvoidanceEnabled: $('navigation-avoidance').checked,
           requireMetricRange: $('navigation-require-range').checked,
+          onboardVisionFallbackEnabled: $('navigation-onboard-vision').checked,
+          onboardCruiseCommandPercent: numberValue('navigation-onboard-cruise'),
+          visualMinimumConfidence: numberValue('navigation-visual-confidence'),
+          visualCautionAreaRatio: numberValue('navigation-visual-caution'),
+          visualStopAreaRatio: numberValue('navigation-visual-stop'),
+          visualCorridorWidth: numberValue('navigation-visual-corridor'),
           stopDistanceMeters: numberValue('navigation-stop-distance'),
           cautionDistanceMeters: numberValue('navigation-caution-distance'),
           rangeTimeoutMs: numberValue('navigation-range-timeout'),

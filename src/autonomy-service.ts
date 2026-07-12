@@ -26,6 +26,7 @@ import {
 import {
   NavigationMapManager,
   applyObstacleAvoidance,
+  applyOnboardVisionGuard,
   gpsGuidance,
   gpsOffsetMeters,
   landingGuidance,
@@ -122,6 +123,7 @@ interface NavigationRuntimeStatus {
   map: NavigationMapState;
   rangeField: RangeField | null;
   rangeFresh: boolean;
+  avoidanceSource: 'metric-range' | 'onboard-vision' | 'none';
   semanticObservations: SemanticObservation[];
   targetPad: LandingPadDefinition | null;
   guidanceReason: string | null;
@@ -294,13 +296,26 @@ function semanticObservations(now = Date.now()): SemanticObservation[] {
   return resolveSemanticObservations(combinedDetections(now), navigationManager.getState().objects);
 }
 
+
+function onboardVisionHealthy(now = Date.now()): boolean {
+  return perception?.state === 'running'
+    && perception.trackingState === 'tracking'
+    && updateIsFresh(perception.lastUpdateAt, now, pipelineFreshnessMs);
+}
+
+function activeAvoidanceSource(now = Date.now()): NavigationRuntimeStatus['avoidanceSource'] {
+  const navigation = navigationManager.getState().settings;
+  if (!navigation.obstacleAvoidanceEnabled) return 'none';
+  if (rangeFieldFresh(activeRange(now), navigation, now)) return 'metric-range';
+  return navigation.onboardVisionFallbackEnabled && onboardVisionHealthy(now) ? 'onboard-vision' : 'none';
+}
+
 function navigationReadiness(settings: AutonomySettings, now = Date.now()): AutonomyReadinessCheck[] {
   const checks: AutonomyReadinessCheck[] = [];
   const navigation = navigationManager.getState();
   const pad = targetPad(settings);
   const needsPad = settings.pattern === 'pad-transfer' || settings.requireLandingMarker || Boolean(settings.landingPadId);
   const needsGpsTransfer = settings.pattern === 'pad-transfer';
-  const metricRangeRequired = navigation.settings.obstacleAvoidanceEnabled && navigation.settings.requireMetricRange;
   const currentRange = activeRange(now);
 
   if (settings.takeoffPadId) {
@@ -364,15 +379,20 @@ function navigationReadiness(settings: AutonomySettings, now = Date.now()): Auto
     });
   }
 
-  if (metricRangeRequired && (needsGpsTransfer || settings.requireLandingMarker)) {
-    const fresh = rangeFieldFresh(currentRange, navigation.settings, now);
+  if (navigation.settings.obstacleAvoidanceEnabled && (needsGpsTransfer || settings.requireLandingMarker)) {
+    const metricReady = rangeFieldFresh(currentRange, navigation.settings, now);
+    const visionReady = navigation.settings.onboardVisionFallbackEnabled && onboardVisionHealthy(now);
     checks.push({
-      key: 'metric-range',
-      label: 'Metric obstacle range',
-      ok: fresh,
-      detail: fresh
-        ? `${currentRange?.source ?? 'unknown'}, fresh`
-        : 'Post fresh multi-sector ToF or LiDAR ranges before autonomous translation',
+      key: 'obstacle-avoidance-source',
+      label: 'Obstacle-avoidance source',
+      ok: metricReady || visionReady,
+      detail: metricReady
+        ? `${currentRange?.source ?? 'metric range'}, fresh`
+        : visionReady
+          ? 'Onboard camera and SLAM guard active, visible forward hazards only'
+          : navigation.settings.onboardVisionFallbackEnabled
+            ? 'Need fresh video and SLAM tracking for onboard-only guarding'
+            : 'Connect fresh ToF or LiDAR range sectors',
     });
   }
 
@@ -415,6 +435,7 @@ function navigationStatus(now = Date.now()): NavigationRuntimeStatus {
     map,
     rangeField: currentRange,
     rangeFresh: rangeFieldFresh(currentRange, map.settings, now),
+    avoidanceSource: activeAvoidanceSource(now),
     semanticObservations: semanticObservations(now),
     targetPad: targetPad(),
     guidanceReason,
@@ -752,6 +773,13 @@ const settingsPatchSchema = z.object({
 const navigationSettingsSchema = z.object({
   obstacleAvoidanceEnabled: z.boolean().optional(),
   requireMetricRange: z.boolean().optional(),
+  onboardVisionFallbackEnabled: z.boolean().optional(),
+  visualDetectionTimeoutMs: z.number().optional(),
+  visualMinimumConfidence: z.number().optional(),
+  visualCautionAreaRatio: z.number().optional(),
+  visualStopAreaRatio: z.number().optional(),
+  visualCorridorWidth: z.number().optional(),
+  onboardCruiseCommandPercent: z.number().optional(),
   rangeTimeoutMs: z.number().optional(),
   stopDistanceMeters: z.number().optional(),
   cautionDistanceMeters: z.number().optional(),
@@ -946,7 +974,18 @@ function applyGuidance(result: GuidanceResult, now: number): void {
   guidanceReason = result.reason;
   guidanceDistanceMeters = result.distanceMeters ?? null;
   const settings = navigationManager.getState().settings;
-  const avoided = applyObstacleAvoidance(result.command, activeRange(now), settings, now);
+  const currentRange = activeRange(now);
+  const avoided = rangeFieldFresh(currentRange, settings, now)
+    ? applyObstacleAvoidance(result.command, currentRange, settings, now)
+    : settings.onboardVisionFallbackEnabled
+      ? applyOnboardVisionGuard(
+        result.command,
+        semanticObservations(now),
+        settings,
+        now,
+        stage === 'aligning-landing-pad',
+      )
+      : applyObstacleAvoidance(result.command, currentRange, settings, now);
   guidanceReason = avoided.reason ?? guidanceReason;
   guidanceDistanceMeters = avoided.distanceMeters ?? guidanceDistanceMeters;
   if (avoided.blocked && !avoided.command.active) {
@@ -1023,10 +1062,13 @@ setInterval(() => {
       gpsUnhealthySince = null;
     }
 
-    const perceptionHealthy = perception?.state === 'running'
-      && perception.trackingState === 'tracking'
-      && updateIsFresh(perception.lastUpdateAt, now, pipelineFreshnessMs);
-    if (settings.requirePerceptionTracking && !perceptionHealthy) {
+    const perceptionHealthy = onboardVisionHealthy(now);
+    const navigationSettings = navigationManager.getState().settings;
+    const onboardGuardRequired = navigationSettings.obstacleAvoidanceEnabled
+      && navigationSettings.onboardVisionFallbackEnabled
+      && !rangeFieldFresh(activeRange(now), navigationSettings, now)
+      && ['navigating', 'aligning-landing-pad'].includes(stage);
+    if ((settings.requirePerceptionTracking || onboardGuardRequired) && !perceptionHealthy) {
       perceptionLostSince ??= now;
       if (now - perceptionLostSince >= 2_000) beginLanding('SLAM tracking was lost', 'aborted');
     } else {

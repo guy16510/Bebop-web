@@ -31,6 +31,13 @@ export interface LandingPadDefinition {
 export interface NavigationSettings {
   obstacleAvoidanceEnabled: boolean;
   requireMetricRange: boolean;
+  onboardVisionFallbackEnabled: boolean;
+  visualDetectionTimeoutMs: number;
+  visualMinimumConfidence: number;
+  visualCautionAreaRatio: number;
+  visualStopAreaRatio: number;
+  visualCorridorWidth: number;
+  onboardCruiseCommandPercent: number;
   rangeTimeoutMs: number;
   stopDistanceMeters: number;
   cautionDistanceMeters: number;
@@ -93,6 +100,13 @@ export interface GuidanceResult {
 export const DEFAULT_NAVIGATION_SETTINGS: NavigationSettings = {
   obstacleAvoidanceEnabled: true,
   requireMetricRange: true,
+  onboardVisionFallbackEnabled: true,
+  visualDetectionTimeoutMs: 750,
+  visualMinimumConfidence: 0.55,
+  visualCautionAreaRatio: 0.035,
+  visualStopAreaRatio: 0.09,
+  visualCorridorWidth: 0.6,
+  onboardCruiseCommandPercent: 6,
   rangeTimeoutMs: 750,
   stopDistanceMeters: 1.1,
   cautionDistanceMeters: 2.2,
@@ -159,6 +173,12 @@ export function normalizeNavigationSettings(
 ): NavigationSettings {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const stopDistanceMeters = bounded(source.stopDistanceMeters, defaults.stopDistanceMeters, 0.25, 10);
+  const visualCautionAreaRatio = bounded(
+    source.visualCautionAreaRatio,
+    defaults.visualCautionAreaRatio,
+    0.005,
+    0.25,
+  );
   return {
     obstacleAvoidanceEnabled: typeof source.obstacleAvoidanceEnabled === 'boolean'
       ? source.obstacleAvoidanceEnabled
@@ -166,6 +186,35 @@ export function normalizeNavigationSettings(
     requireMetricRange: typeof source.requireMetricRange === 'boolean'
       ? source.requireMetricRange
       : defaults.requireMetricRange,
+    onboardVisionFallbackEnabled: typeof source.onboardVisionFallbackEnabled === 'boolean'
+      ? source.onboardVisionFallbackEnabled
+      : defaults.onboardVisionFallbackEnabled,
+    visualDetectionTimeoutMs: bounded(
+      source.visualDetectionTimeoutMs,
+      defaults.visualDetectionTimeoutMs,
+      200,
+      2_000,
+    ),
+    visualMinimumConfidence: bounded(
+      source.visualMinimumConfidence,
+      defaults.visualMinimumConfidence,
+      0.1,
+      0.99,
+    ),
+    visualCautionAreaRatio,
+    visualStopAreaRatio: bounded(
+      source.visualStopAreaRatio,
+      defaults.visualStopAreaRatio,
+      visualCautionAreaRatio + 0.005,
+      0.5,
+    ),
+    visualCorridorWidth: bounded(source.visualCorridorWidth, defaults.visualCorridorWidth, 0.2, 1),
+    onboardCruiseCommandPercent: bounded(
+      source.onboardCruiseCommandPercent,
+      defaults.onboardCruiseCommandPercent,
+      3,
+      10,
+    ),
     rangeTimeoutMs: bounded(source.rangeTimeoutMs, defaults.rangeTimeoutMs, 100, 5_000),
     stopDistanceMeters,
     cautionDistanceMeters: bounded(source.cautionDistanceMeters, defaults.cautionDistanceMeters, stopDistanceMeters + 0.1, 20),
@@ -466,6 +515,95 @@ export function applyObstacleAvoidance(
     };
   }
   return { command, arrived: false, blocked: false, reason: null, distanceMeters: distance };
+}
+
+
+function visualCorridorOverlap(bbox: NormalizedBoundingBox, width: number): boolean {
+  const left = 0.5 - width / 2;
+  const right = 0.5 + width / 2;
+  return bbox.x + bbox.width >= left && bbox.x <= right;
+}
+
+function capVisualAxis(value: number, maximum: number): number {
+  return Math.sign(value) * Math.min(Math.abs(value), maximum);
+}
+
+export function applyOnboardVisionGuard(
+  command: PilotingCommand,
+  observations: SemanticObservation[],
+  settings: NavigationSettings,
+  now = Date.now(),
+  allowLandingLateral = false,
+): GuidanceResult {
+  if (!command.active || !settings.obstacleAvoidanceEnabled || !settings.onboardVisionFallbackEnabled) {
+    return { command, arrived: false, blocked: false, reason: null };
+  }
+
+  const translating = command.pitch !== 0 || command.roll !== 0;
+  if (!translating) return { command, arrived: false, blocked: false, reason: null };
+  if (command.pitch < 0) {
+    return {
+      command: ZERO_COMMAND,
+      arrived: false,
+      blocked: true,
+      reason: 'Rear translation is disabled without a rear distance sensor',
+    };
+  }
+  if (command.roll !== 0 && !allowLandingLateral) {
+    return {
+      command: ZERO_COMMAND,
+      arrived: false,
+      blocked: true,
+      reason: 'Lateral translation is disabled outside precision landing without side distance sensors',
+    };
+  }
+
+  const threats = observations
+    .filter((observation) => observation.behavior !== 'ignore' && observation.behavior !== 'landing-pad')
+    .filter((observation) => observation.confidence >= settings.visualMinimumConfidence)
+    .filter((observation) => observation.lastSeenAt <= now + 250)
+    .filter((observation) => now - observation.lastSeenAt <= settings.visualDetectionTimeoutMs)
+    .filter((observation) => visualCorridorOverlap(observation.bbox, settings.visualCorridorWidth))
+    .map((observation) => ({ observation, area: observation.bbox.width * observation.bbox.height }))
+    .sort((a, b) => b.area - a.area);
+  const threat = threats[0];
+
+  if (threat && threat.area >= settings.visualStopAreaRatio) {
+    return {
+      command: ZERO_COMMAND,
+      arrived: false,
+      blocked: true,
+      reason: `Visible ${threat.observation.name} occupies ${(threat.area * 100).toFixed(1)}% of the image corridor`,
+    };
+  }
+
+  const cap = settings.onboardCruiseCommandPercent;
+  const capped: PilotingCommand = {
+    roll: capVisualAxis(command.roll, cap),
+    pitch: capVisualAxis(command.pitch, cap),
+    yaw: capVisualAxis(command.yaw, cap),
+    gaz: command.gaz,
+    active: command.active,
+  };
+  if (threat && threat.area >= settings.visualCautionAreaRatio) {
+    capped.roll = Math.round(capped.roll * 0.4);
+    capped.pitch = Math.round(capped.pitch * 0.4);
+    capped.yaw = Math.round(capped.yaw * 0.4);
+    capped.active = capped.roll !== 0 || capped.pitch !== 0 || capped.yaw !== 0 || capped.gaz !== 0;
+    return {
+      command: capped,
+      arrived: false,
+      blocked: false,
+      reason: `Visible ${threat.observation.name} is approaching the image corridor, movement reduced`,
+    };
+  }
+
+  return {
+    command: capped,
+    arrived: false,
+    blocked: false,
+    reason: 'Onboard camera guard active, no visible hazard in the flight corridor',
+  };
 }
 
 function wrapRadians(value: number): number {
