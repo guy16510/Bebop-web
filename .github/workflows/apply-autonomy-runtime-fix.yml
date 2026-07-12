@@ -1,0 +1,106 @@
+name: Apply autonomy runtime repair
+
+on:
+  push:
+    branches: [fix/autonomy-physical-telemetry]
+
+permissions:
+  contents: write
+
+jobs:
+  repair-and-verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/autonomy-physical-telemetry
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Repair physical telemetry and takeoff sequencing
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          adapter = Path('src/drone-adapters.ts')
+          text = adapter.read_text()
+          old = """    this.client.on('altitude', (value: number) => {
+                this.snapshot.telemetry.altitude = value;
+                update();
+              });"""
+          new = """    const updateAltitude = (event: unknown) => {
+                const altitude = objectNumber(event, 'altitude') ?? finite(event);
+                if (altitude === null) return;
+                this.snapshot.telemetry.altitude = altitude;
+                update();
+              };
+              // node-bebop emits the raw ARCommands event as AltitudeChanged.
+              // Keep the lowercase listener for compatibility with alternate adapters.
+              this.client.on('AltitudeChanged', updateAltitude);
+              this.client.on('altitude', updateAltitude);"""
+          if old not in text:
+              raise SystemExit('Expected altitude listener was not found')
+          adapter.write_text(text.replace(old, new, 1))
+
+          service = Path('src/autonomy-service.ts')
+          text = service.read_text()
+          old = """  if (stage === 'taking-off' && drone && ['takingOff', 'hovering', 'flying'].includes(drone.telemetry.flyingState)) {
+              transition('climbing');
+            }"""
+          new = """  if (stage === 'taking-off' && drone && ['hovering', 'flying'].includes(drone.telemetry.flyingState)) {
+              transition('climbing');
+            }"""
+          if old not in text:
+              raise SystemExit('Expected takeoff transition was not found')
+          service.write_text(text.replace(old, new, 1))
+
+          test = Path('src/drone-adapters.test.ts')
+          test.write_text("""import { EventEmitter } from 'node:events';
+          import { describe, expect, it } from 'vitest';
+          import { BebopDrone } from './drone-adapters.js';
+
+          const logger = {
+            info: () => undefined,
+            warn: () => undefined,
+            error: () => undefined,
+          };
+
+          function telemetryHarness(): { drone: BebopDrone; client: EventEmitter } {
+            const drone = new BebopDrone(logger);
+            const client = new EventEmitter();
+            (drone as any).client = client;
+            (drone as any).bindTelemetry();
+            return { drone, client };
+          }
+
+          describe('Bebop telemetry bindings', () => {
+            it('reads the raw node-bebop AltitudeChanged payload', () => {
+              const { drone, client } = telemetryHarness();
+              client.emit('AltitudeChanged', { altitude: 1.75 });
+              expect(drone.getSnapshot().telemetry.altitude).toBe(1.75);
+            });
+
+            it('keeps numeric lowercase altitude compatibility', () => {
+              const { drone, client } = telemetryHarness();
+              client.emit('altitude', 2.25);
+              expect(drone.getSnapshot().telemetry.altitude).toBe(2.25);
+            });
+          });
+          """)
+          PY
+      - run: npm install
+      - run: npm run typecheck
+      - run: npm run check:client
+      - run: npm test
+      - run: npm run build
+      - run: node scripts/autonomy-smoke.mjs
+      - name: Commit verified repair
+        run: |
+          rm .github/workflows/apply-autonomy-runtime-fix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/drone-adapters.ts src/autonomy-service.ts src/drone-adapters.test.ts .github/workflows/apply-autonomy-runtime-fix.yml
+          git commit -m "Fix physical autonomy altitude telemetry"
+          git push origin HEAD:fix/autonomy-physical-telemetry
