@@ -2,16 +2,25 @@ export type MappingAutostartStage =
   | 'disabled'
   | 'waiting-for-drone'
   | 'connecting'
+  | 'connected'
   | 'starting-video'
   | 'waiting-for-video'
+  | 'video-only'
   | 'starting-perception'
   | 'initializing'
   | 'mapping'
   | 'recovering'
   | 'fault';
 
+export interface MappingAutostartDesired {
+  autoConnect: boolean;
+  video: boolean;
+  perception: boolean;
+}
+
 export interface MappingAutostartStatus {
   enabled: boolean;
+  desired: MappingAutostartDesired;
   stage: MappingAutostartStage;
   attempts: number;
   recoveries: number;
@@ -20,7 +29,8 @@ export interface MappingAutostartStatus {
 }
 
 export interface MappingAutostartOptions {
-  enabled: boolean;
+  enabled?: boolean;
+  desired?: MappingAutostartDesired;
   getConnectionState: () => string;
   connect: () => Promise<void>;
   getVideoHealth: () => {
@@ -47,6 +57,16 @@ export interface MappingAutostartOptions {
   onUpdate?: (status: MappingAutostartStatus) => void;
 }
 
+const DISABLED_DESIRED: MappingAutostartDesired = {
+  autoConnect: false,
+  video: false,
+  perception: false,
+};
+
+function enabledFor(desired: MappingAutostartDesired): boolean {
+  return desired.autoConnect || desired.video || desired.perception;
+}
+
 export class MappingAutostartCoordinator {
   private readonly now: () => number;
   private readonly retryMs: number;
@@ -54,7 +74,7 @@ export class MappingAutostartCoordinator {
   private readonly staleFrameMs: number;
   private readonly trackingTimeoutMs: number;
   private readonly intervalMs: number;
-  private enabled: boolean;
+  private desired: MappingAutostartDesired;
   private busy = false;
   private timer?: NodeJS.Timeout;
   private nextAttemptAt = 0;
@@ -69,10 +89,15 @@ export class MappingAutostartCoordinator {
     this.staleFrameMs = Math.max(1_000, options.staleFrameMs ?? 5_000);
     this.trackingTimeoutMs = Math.max(5_000, options.trackingTimeoutMs ?? 30_000);
     this.intervalMs = Math.max(100, options.intervalMs ?? 500);
-    this.enabled = options.enabled;
+    this.desired = options.desired
+      ? { ...options.desired }
+      : options.enabled
+        ? { autoConnect: true, video: true, perception: true }
+        : { ...DISABLED_DESIRED };
     this.status = {
-      enabled: this.enabled,
-      stage: this.enabled ? 'waiting-for-drone' : 'disabled',
+      enabled: enabledFor(this.desired),
+      desired: { ...this.desired },
+      stage: enabledFor(this.desired) ? 'waiting-for-drone' : 'disabled',
       attempts: 0,
       recoveries: 0,
       lastError: null,
@@ -81,7 +106,7 @@ export class MappingAutostartCoordinator {
   }
 
   getStatus(): MappingAutostartStatus {
-    return { ...this.status };
+    return structuredClone(this.status);
   }
 
   start(): void {
@@ -94,19 +119,25 @@ export class MappingAutostartCoordinator {
   async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
-    this.setEnabled(false);
+    this.setDesired(DISABLED_DESIRED);
   }
 
   setEnabled(enabled: boolean): void {
-    this.enabled = enabled;
+    this.setDesired(enabled
+      ? { autoConnect: true, video: true, perception: true }
+      : DISABLED_DESIRED);
+  }
+
+  setDesired(desired: MappingAutostartDesired): void {
+    this.desired = { ...desired };
     this.nextAttemptAt = 0;
     this.videoAttemptStartedAt = null;
     this.trackingAttemptStartedAt = null;
-    this.update(enabled ? 'waiting-for-drone' : 'disabled', null);
+    this.update(enabledFor(this.desired) ? 'waiting-for-drone' : 'disabled', null);
   }
 
   async tick(): Promise<void> {
-    if (!this.enabled || this.busy) return;
+    if (this.busy) return;
     this.busy = true;
     try {
       await this.reconcile();
@@ -116,11 +147,22 @@ export class MappingAutostartCoordinator {
   }
 
   private async reconcile(): Promise<void> {
+    const enabled = enabledFor(this.desired);
+    if (!enabled) {
+      await this.stopUndesiredPipelines(false, false);
+      this.update('disabled', null);
+      return;
+    }
+
     const now = this.now();
     const connectionState = this.options.getConnectionState();
     if (connectionState !== 'connected') {
       this.videoAttemptStartedAt = null;
       this.trackingAttemptStartedAt = null;
+      if (!this.desired.autoConnect) {
+        this.update('waiting-for-drone', null);
+        return;
+      }
       if (now < this.nextAttemptAt || connectionState === 'connecting') {
         this.update(connectionState === 'connecting' ? 'connecting' : 'waiting-for-drone');
         return;
@@ -130,10 +172,16 @@ export class MappingAutostartCoordinator {
       try {
         await this.options.connect();
         this.nextAttemptAt = 0;
-        this.update('starting-video', null);
+        this.update(this.desired.video ? 'starting-video' : 'connected', null);
       } catch (error) {
         this.fail(error);
       }
+      return;
+    }
+
+    if (!this.desired.video) {
+      await this.stopUndesiredPipelines(false, false);
+      this.update('connected', null);
       return;
     }
 
@@ -172,6 +220,12 @@ export class MappingAutostartCoordinator {
     }
     this.videoAttemptStartedAt = null;
 
+    if (!this.desired.perception) {
+      await this.stopUndesiredPipelines(true, false);
+      this.update('video-only', null);
+      return;
+    }
+
     const perception = this.options.getPerceptionHealth();
     if (perception.state === 'fault' || perception.trackingState === 'fault') {
       await this.recover(perception.lastError ?? 'Perception process fault');
@@ -209,6 +263,17 @@ export class MappingAutostartCoordinator {
     this.update('initializing', perception.lastError);
   }
 
+  private async stopUndesiredPipelines(keepVideo: boolean, keepPerception: boolean): Promise<void> {
+    const tasks: Promise<void>[] = [];
+    const perception = this.options.getPerceptionHealth();
+    if (!keepPerception && perception.state !== 'disabled' && perception.state !== 'stopped') {
+      tasks.push(this.options.stopPerception());
+    }
+    const video = this.options.getVideoHealth();
+    if (!keepVideo && video.state !== 'disabled') tasks.push(this.options.stopVideo());
+    if (tasks.length > 0) await Promise.allSettled(tasks);
+  }
+
   private async recover(reason: string): Promise<void> {
     this.status.recoveries += 1;
     this.update('recovering', reason);
@@ -227,7 +292,8 @@ export class MappingAutostartCoordinator {
   private update(stage: MappingAutostartStage, error = this.status.lastError): void {
     this.status = {
       ...this.status,
-      enabled: this.enabled,
+      enabled: enabledFor(this.desired),
+      desired: { ...this.desired },
       stage,
       lastError: error,
       updatedAt: this.now(),
