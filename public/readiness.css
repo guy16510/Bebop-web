@@ -1,0 +1,32 @@
+.readiness-panel {
+  margin: 16px 0;
+  padding: 14px 16px;
+  border: 1px solid #475569;
+  border-radius: 12px;
+  background: #0f172a;
+}
+
+.readiness-panel strong {
+  display: inline-block;
+  margin-bottom: 6px;
+}
+
+.readiness-panel p {
+  margin: 0;
+}
+
+.readiness-pending {
+  color: #cbd5e1;
+}
+
+.readiness-good {
+  color: #4ade80;
+}
+
+.readiness-warning {
+  color: #fbbf24;
+}
+
+.readiness-bad {
+  color: #f87171;
+}
