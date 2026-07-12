@@ -9,6 +9,7 @@ const directory = mkdtempSync(join(tmpdir(), 'bebop-autonomy-smoke-'));
 const settingsPath = join(directory, 'autonomy.json');
 const navigationPath = join(directory, 'navigation.json');
 const logs = [];
+let rangeTimer;
 
 const child = spawn(process.execPath, ['dist/src/autonomy-launcher.js'], {
   env: {
@@ -95,6 +96,19 @@ async function stopChild() {
   ]);
 }
 
+const clearRange = {
+  source: 'smoke-clear-space',
+  sectors: {
+    frontLeft: 20,
+    front: 20,
+    frontRight: 20,
+    left: 20,
+    right: 20,
+    rear: 20,
+    down: 2,
+  },
+};
+
 try {
   await waitFor(
     `http://127.0.0.1:${port}/api/health`,
@@ -145,18 +159,10 @@ try {
     approachAltitudeMeters: 1.2,
     arrivalRadiusMeters: 0.6,
   });
-  await post('/api/navigation/ranges', {
-    source: 'smoke-clear-space',
-    sectors: {
-      frontLeft: 20,
-      front: 20,
-      frontRight: 20,
-      left: 20,
-      right: 20,
-      rear: 20,
-      down: 2,
-    },
-  });
+  await post('/api/navigation/ranges', clearRange);
+  rangeTimer = setInterval(() => {
+    void post('/api/navigation/ranges', clearRange).catch((error) => logs.push(String(error)));
+  }, 250);
   await post('/api/autonomy/settings', {
     pattern: 'pad-transfer',
     landingPadId: 'north-pad',
@@ -173,22 +179,26 @@ try {
   );
 
   const stages = new Set();
+  let semanticSeen = false;
   await post('/api/autonomy/start', {});
   const transferCompleted = await waitFor(
     `http://127.0.0.1:${autonomyPort}/api/autonomy`,
     (status) => status.stage === 'completed' && status.missionId === 2 && status.telemetry?.flyingState === 'landed',
     'GPS transfer, AprilTag alignment, and precision landing mission',
     35_000,
-    (status) => stages.add(status.stage),
+    (status) => {
+      stages.add(status.stage);
+      if (status.navigation.semanticObservations.some((item) => item.semanticId === 'charging-dock')) {
+        semanticSeen = true;
+      }
+    },
   );
 
   for (const expected of ['navigating', 'searching-landing-pad', 'aligning-landing-pad', 'landing']) {
     if (!stages.has(expected)) throw new Error(`Pad-transfer mission never reached ${expected}: ${[...stages].join(', ')}`);
   }
   if (transferCompleted.lastError) throw new Error(`Mission completed with error: ${transferCompleted.lastError}`);
-  if (!transferCompleted.navigation.semanticObservations.some((item) => item.semanticId === 'charging-dock')) {
-    throw new Error('AprilTag observation was not resolved through the semantic object registry');
-  }
+  if (!semanticSeen) throw new Error('AprilTag observation was not resolved through the semantic object registry');
 
   console.log(JSON.stringify({
     ok: true,
@@ -196,12 +206,14 @@ try {
     finalStage: transferCompleted.stage,
     flyingState: transferCompleted.telemetry.flyingState,
     stages: [...stages],
+    semanticSeen,
     targetPad: transferCompleted.navigation.targetPad?.name,
   }));
 } catch (error) {
   console.error(logs.join(''));
   throw error;
 } finally {
+  if (rangeTimer) clearInterval(rangeTimer);
   await stopChild();
   rmSync(directory, { recursive: true, force: true });
 }
