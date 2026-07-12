@@ -20,6 +20,13 @@ using json = nlohmann::json;
 
 namespace {
 
+constexpr int kWidth = 428;
+constexpr int kHeight = 240;
+constexpr double kFx = 268.646439;
+constexpr double kFy = 263.500174;
+constexpr double kCx = 213.665927;
+constexpr double kCy = 120.113444;
+
 std::string envString(const char* name, const std::string& fallback) {
   const char* value = std::getenv(name);
   return value && *value ? std::string(value) : fallback;
@@ -33,12 +40,12 @@ struct SyntheticPoint {
 const std::vector<SyntheticPoint>& syntheticCloud() {
   static const std::vector<SyntheticPoint> cloud = [] {
     std::vector<SyntheticPoint> points;
-    points.reserve(900);
+    points.reserve(1100);
     cv::RNG random(0xBEB02);
-    for (int index = 0; index < 900; ++index) {
+    for (int index = 0; index < 1100; ++index) {
       SyntheticPoint point;
-      point.world.x = random.uniform(-5.0F, 5.0F);
-      point.world.y = random.uniform(-2.8F, 2.8F);
+      point.world.x = random.uniform(-4.8F, 4.8F);
+      point.world.y = random.uniform(-2.5F, 2.5F);
       point.world.z = random.uniform(3.0F, 12.0F);
       point.pattern = random.uniform(0, 16);
       points.push_back(point);
@@ -49,18 +56,11 @@ const std::vector<SyntheticPoint>& syntheticCloud() {
 }
 
 cv::Mat makeSyntheticFrame(int frameNumber) {
-  constexpr int width = 480;
-  constexpr int height = 276;
-  constexpr double fx = 240.0;
-  constexpr double fy = 240.0;
-  constexpr double cx = 240.0;
-  constexpr double cy = 138.0;
-
-  cv::Mat frame(height, width, CV_8UC3, cv::Scalar(16, 22, 30));
-  const double cameraX = frameNumber * 0.018;
+  cv::Mat frame(kHeight, kWidth, CV_8UC3, cv::Scalar(16, 22, 30));
+  const double cameraX = frameNumber * 0.014;
   const double cameraY = std::sin(frameNumber * 0.08) * 0.035;
-  const double cameraZ = frameNumber * 0.006;
-  const double yaw = frameNumber * 0.0025;
+  const double cameraZ = frameNumber * 0.004;
+  const double yaw = frameNumber * 0.0022;
   const double cosYaw = std::cos(yaw);
   const double sinYaw = std::sin(yaw);
 
@@ -75,12 +75,9 @@ cv::Mat makeSyntheticFrame(int frameNumber) {
     const double cameraPointY = dy;
     if (cameraPointZ <= 0.25) continue;
 
-    const double radial = std::hypot(cameraPointX, cameraPointY);
-    const double theta = std::atan2(radial, cameraPointZ);
-    const double projectionScale = radial > 1e-9 ? theta / radial : 1.0 / cameraPointZ;
-    const int u = static_cast<int>(std::lround(fx * cameraPointX * projectionScale + cx));
-    const int v = static_cast<int>(std::lround(fy * cameraPointY * projectionScale + cy));
-    if (u < 7 || u >= width - 7 || v < 7 || v >= height - 7) continue;
+    const int u = static_cast<int>(std::lround(kFx * cameraPointX / cameraPointZ + kCx));
+    const int v = static_cast<int>(std::lround(kFy * cameraPointY / cameraPointZ + kCy));
+    if (u < 7 || u >= kWidth - 7 || v < 7 || v >= kHeight - 7) continue;
 
     const int shade = 80 + static_cast<int>((index * 47) % 170);
     const cv::Scalar color(shade, shade, shade);
@@ -105,7 +102,7 @@ cv::Mat makeSyntheticFrame(int frameNumber) {
   }
 
   if (visible < 250) {
-    throw std::runtime_error("Synthetic replay produced too few visible points");
+    throw std::runtime_error("Synthetic Bebop replay produced too few visible points");
   }
   return frame;
 }
@@ -128,8 +125,8 @@ int main() {
   try {
     const std::string vocabulary =
         envString("ORB_VOCABULARY", "/opt/ORB_SLAM3/Vocabulary/ORBvoc.txt");
-    const std::string settings =
-        envString("ORB_SETTINGS", "/config/bebop2.example.yaml");
+    const std::string settings = envString(
+        "ORB_SETTINGS", "/config/bebop2-upstream-428x240.yaml");
     const std::string model = envString("YOLOX_MODEL", "/models/yolox_tiny.onnx");
     const std::string videoOutput = envString("SYNTHETIC_VIDEO_OUT", "");
 
@@ -150,7 +147,7 @@ int main() {
         std::filesystem::create_directories(outputPath.parent_path());
       }
       writer.open(videoOutput, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), 30.0,
-                  cv::Size(480, 276));
+                  cv::Size(kWidth, kHeight));
       if (!writer.isOpened()) {
         throw std::runtime_error("Unable to create synthetic replay video: " + videoOutput);
       }
@@ -181,7 +178,7 @@ int main() {
     slam.Shutdown();
     if (!trackingReached) {
       throw std::runtime_error(
-          "ORB-SLAM3 did not reach tracking on the deterministic replay");
+          "ORB-SLAM3 did not reach tracking with the shipped Bebop calibration");
     }
     if (maxTrackedPoints == 0 || maxTrackedFeatures < 40) {
       throw std::runtime_error(
@@ -200,16 +197,24 @@ int main() {
     detector.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
     detector.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
     cv::Mat detectorInput = makeSyntheticFrame(20);
-    cv::resize(detectorInput, detectorInput, cv::Size(416, 416));
-    cv::Mat blob = cv::dnn::blobFromImage(detectorInput, 1.0,
-                                          cv::Size(416, 416), cv::Scalar(), false,
-                                          false, CV_32F);
+    cv::Mat resized;
+    cv::resize(detectorInput, resized, cv::Size(416, 416));
+    cv::Mat blob = cv::dnn::blobFromImage(resized, 1.0, cv::Size(416, 416),
+                                          cv::Scalar(), false, false, CV_32F);
     detector.setInput(blob);
     cv::Mat output = detector.forward();
     requireFinite(output);
 
     protocol
         << json({{"ok", true},
+                 {"camera",
+                  {{"model", "PinHole"},
+                   {"width", kWidth},
+                   {"height", kHeight},
+                   {"fx", kFx},
+                   {"fy", kFy},
+                   {"cx", kCx},
+                   {"cy", kCy}}},
                  {"orbSlam3",
                   {{"vocabularyLoaded", true},
                    {"systemConstructed", true},
