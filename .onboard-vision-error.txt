@@ -1,3 +1,0 @@
-Expected text not found in public/navigation.js: "          obstacleAvoidanceEnabled: $('navigation-avoidance').checked,\nrequireMetricRange: $('navigation-require-range')"
-
-exit_status=1
