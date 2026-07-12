@@ -62,8 +62,7 @@ RUN git clone https://github.com/UZ-SLAMLab/ORB_SLAM3.git /opt/ORB_SLAM3 \
     && test -s /opt/ORB_SLAM3/lib/libORB_SLAM3.so
 
 COPY perception-sidecar /work/perception-sidecar
-RUN sed -i 's/1.0F - x/1.0 - x/g; s/1.0F - y/1.0 - y/g' /work/perception-sidecar/src/main.cpp \
-    && cmake -S /work/perception-sidecar -B /work/perception-sidecar/build \
+RUN cmake -S /work/perception-sidecar -B /work/perception-sidecar/build \
       -DCMAKE_BUILD_TYPE=Release \
       -DORB_SLAM3_ROOT=/opt/ORB_SLAM3 \
     && cmake --build /work/perception-sidecar/build --parallel 2 \
@@ -76,14 +75,15 @@ RUN mkdir -p /models /config \
     && test -s /models/yolox_tiny.onnx
 
 COPY perception-sidecar/config/bebop2.example.yaml /config/bebop2.example.yaml
+COPY config/perception/bebop2-upstream-428x240.yaml /config/bebop2-upstream-428x240.yaml
 COPY perception-sidecar/entrypoint.sh /usr/local/bin/perception-entrypoint
 RUN chmod +x /usr/local/bin/perception-entrypoint \
     && export LD_LIBRARY_PATH=/opt/ORB_SLAM3/lib:/opt/ORB_SLAM3/Thirdparty/DBoW2/lib:/opt/ORB_SLAM3/Thirdparty/g2o/lib:/usr/local/lib \
     && /usr/local/bin/bebop-perception-sidecar --self-test | grep -q 'perception.snapshot' \
-    && ORB_SETTINGS=/config/bebop2.example.yaml \
+    && ORB_SETTINGS=/config/bebop2-upstream-428x240.yaml \
        /usr/local/bin/bebop-perception-engine-self-test > /tmp/perception-engine-self-test.json \
     && grep -q '"inferenceExecuted":true' /tmp/perception-engine-self-test.json \
-    && grep -q '"systemConstructed":true' /tmp/perception-engine-self-test.json
+    && grep -q '"trackingReached":true' /tmp/perception-engine-self-test.json
 
 ENV ORB_VOCABULARY=/opt/ORB_SLAM3/Vocabulary/ORBvoc.txt \
     ORB_SETTINGS=/config/bebop2.yaml \
