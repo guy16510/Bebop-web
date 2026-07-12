@@ -3,16 +3,19 @@ set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 IMAGE_NAME=${PERCEPTION_IMAGE:-bebop-perception-sidecar:local}
-CALIBRATION_FILE=${PERCEPTION_CALIBRATION_FILE:-$ROOT_DIR/config/perception/bebop2.yaml}
+CALIBRATION_FILE=${PERCEPTION_CALIBRATION_FILE:-config/perception/bebop2-upstream-428x240.yaml}
+
+if [[ "$CALIBRATION_FILE" != /* ]]; then
+  CALIBRATION_FILE="$ROOT_DIR/$CALIBRATION_FILE"
+fi
 
 if [[ ! -s "$CALIBRATION_FILE" ]]; then
-  echo "Missing measured camera calibration: $CALIBRATION_FILE" >&2
-  echo "Run scripts/calibrate-bebop-camera.py before starting real perception." >&2
+  echo "Missing camera calibration: $CALIBRATION_FILE" >&2
+  echo "Use config/perception/bebop2-upstream-428x240.yaml or run scripts/calibrate-bebop-camera.py." >&2
   exit 65
 fi
 
 exec docker run --rm -i \
-  --name bebop-perception-sidecar \
   --add-host host.docker.internal:host-gateway \
   -e PERCEPTION_CAMERA_CALIBRATED=true \
   -e PERCEPTION_OUTPUT_HZ="${PERCEPTION_OUTPUT_HZ:-10}" \
