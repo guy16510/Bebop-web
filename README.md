@@ -138,12 +138,14 @@ npm run perception:sidecar:verify
 This command requires the Docker image and verifies:
 
 - the native binaries load and link
-- the ORB vocabulary and settings load
-- deterministic 3D frames make ORB-SLAM3 reach tracking
-- ORB-SLAM3 creates map points and tracks features
+- the ORB vocabulary and shipped 428x240 Bebop settings load
+- 120 deterministic 3D frames make ORB-SLAM3 reach tracking
+- ORB-SLAM3 creates map points and tracks at least 40 features
 - YOLOX loads and completes CPU inference with finite output
 - a synthetic AVI is processed through the production sidecar VideoCapture path
 - production NDJSON snapshots contain tracked poses, trajectory growth, landmarks, and inference metrics
+
+GitHub Actions run `29179474100` passed the complete Node/dashboard job and the native Docker plus production-replay job for the shipped camera profile.
 
 Run the Node and dashboard checks:
 
