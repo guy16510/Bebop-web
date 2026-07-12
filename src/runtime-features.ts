@@ -37,9 +37,11 @@ function sanitize(value: unknown): Partial<RuntimeFeatureSettings> {
   if (!value || typeof value !== 'object') return {};
   const source = value as Record<string, unknown>;
   const result: Partial<RuntimeFeatureSettings> = {};
-  for (const key of FEATURE_KEYS) {
-    if (typeof source[key] === 'boolean') result[key] = source[key] as never;
-  }
+  if (typeof source.autoConnect === 'boolean') result.autoConnect = source.autoConnect;
+  if (typeof source.video === 'boolean') result.video = source.video;
+  if (typeof source.perception === 'boolean') result.perception = source.perception;
+  if (typeof source.showDetections === 'boolean') result.showDetections = source.showDetections;
+  if (typeof source.showMap === 'boolean') result.showMap = source.showMap;
   return result;
 }
 
@@ -47,13 +49,14 @@ function normalize(
   current: RuntimeFeatureSettings,
   patch: Partial<RuntimeFeatureSettings>,
 ): RuntimeFeatureSettings {
-  const next = { ...current, ...sanitize(patch) };
+  const sanitized = sanitize(patch);
+  const next = { ...current, ...sanitized };
 
   // Perception requires decoded video. Turning perception on enables video.
-  if (patch.perception === true) next.video = true;
+  if (sanitized.perception === true) next.video = true;
 
   // Turning video off must stop the sidecar because it has no frame source.
-  if (patch.video === false) next.perception = false;
+  if (sanitized.video === false) next.perception = false;
 
   return next;
 }
