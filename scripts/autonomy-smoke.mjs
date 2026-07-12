@@ -7,6 +7,7 @@ const port = 34_000 + (process.pid % 500);
 const autonomyPort = port + 1;
 const directory = mkdtempSync(join(tmpdir(), 'bebop-autonomy-smoke-'));
 const settingsPath = join(directory, 'autonomy.json');
+const navigationPath = join(directory, 'navigation.json');
 const logs = [];
 
 const child = spawn(process.execPath, ['dist/src/autonomy-launcher.js'], {
@@ -17,6 +18,7 @@ const child = spawn(process.execPath, ['dist/src/autonomy-launcher.js'], {
     AUTONOMY_PORT: String(autonomyPort),
     AUTONOMY_HOST: '127.0.0.1',
     AUTONOMY_SETTINGS_FILE: settingsPath,
+    NAVIGATION_MAP_FILE: navigationPath,
     AUTONOMY_ENABLED: 'true',
     AUTONOMY_ALLOW_PHYSICAL_FLIGHT: 'false',
     AUTONOMY_REQUIRE_VIDEO: 'false',
@@ -25,11 +27,12 @@ const child = spawn(process.execPath, ['dist/src/autonomy-launcher.js'], {
     AUTONOMY_RESERVE_BATTERY_PERCENT: '10',
     AUTONOMY_TARGET_ALTITUDE_METERS: '1.2',
     AUTONOMY_MAXIMUM_ALTITUDE_METERS: '3',
-    AUTONOMY_MAXIMUM_FLIGHT_SECONDS: '20',
+    AUTONOMY_MAXIMUM_FLIGHT_SECONDS: '30',
     AUTONOMY_TELEMETRY_TIMEOUT_MS: '1500',
     AUTONOMY_COMMAND_PERCENT: '12',
     AUTONOMY_PATTERN: 'hover',
     AUTONOMY_HOVER_SECONDS: '2',
+    LANDING_VISION_ENABLED: 'false',
     FEATURE_AUTO_CONNECT: 'true',
     FEATURE_VIDEO_ENABLED: 'false',
     FEATURE_PERCEPTION_ENABLED: 'false',
@@ -58,13 +61,22 @@ async function jsonRequest(url, options) {
   return body;
 }
 
-async function waitFor(url, predicate, description, timeoutMs = 20_000) {
+async function post(path, body) {
+  return jsonRequest(`http://127.0.0.1:${autonomyPort}${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+async function waitFor(url, predicate, description, timeoutMs = 20_000, onSample) {
   const deadline = Date.now() + timeoutMs;
   let last;
   while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error(`Launcher exited early with ${child.exitCode}`);
     try {
       last = await jsonRequest(url);
+      onSample?.(last);
       if (predicate(last)) return last;
     } catch (error) {
       last = error instanceof Error ? error.message : String(error);
@@ -102,28 +114,89 @@ try {
   );
   if (ready.mode !== 'simulated') throw new Error(`Expected simulated mode, received ${ready.mode}`);
 
-  await jsonRequest(`http://127.0.0.1:${autonomyPort}/api/autonomy/start`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: '{}',
-  });
-
-  const completed = await waitFor(
+  await post('/api/autonomy/start', {});
+  const hoverCompleted = await waitFor(
     `http://127.0.0.1:${autonomyPort}/api/autonomy`,
     (status) => status.stage === 'completed' && status.telemetry?.flyingState === 'landed',
     'the autonomous takeoff, altitude, hover, and landing mission',
     25_000,
   );
+  if (hoverCompleted.missionId !== 1) throw new Error(`Expected mission 1, received ${hoverCompleted.missionId}`);
 
-  if (completed.missionId !== 1) throw new Error(`Expected mission 1, received ${completed.missionId}`);
-  if (completed.lastError) throw new Error(`Mission completed with error: ${completed.lastError}`);
+  const latitude = hoverCompleted.telemetry.latitude;
+  const longitude = hoverCompleted.telemetry.longitude;
+  if (typeof latitude !== 'number' || typeof longitude !== 'number') throw new Error('Simulation GPS telemetry is missing');
+
+  await post('/api/navigation/objects', {
+    id: 'charging-dock',
+    name: 'Charging dock',
+    labels: [],
+    markerIds: [7],
+    behavior: 'landing-pad',
+    clearanceMeters: 0.3,
+    notes: 'Autonomy smoke-test destination',
+  });
+  await post('/api/navigation/pads', {
+    id: 'north-pad',
+    name: 'North pad',
+    markerId: 7,
+    markerSizeMeters: 0.3,
+    gps: { latitude: latitude + 0.000018, longitude },
+    approachAltitudeMeters: 1.2,
+    arrivalRadiusMeters: 0.6,
+  });
+  await post('/api/navigation/ranges', {
+    source: 'smoke-clear-space',
+    sectors: {
+      frontLeft: 20,
+      front: 20,
+      frontRight: 20,
+      left: 20,
+      right: 20,
+      rear: 20,
+      down: 2,
+    },
+  });
+  await post('/api/autonomy/settings', {
+    pattern: 'pad-transfer',
+    landingPadId: 'north-pad',
+    requireLandingMarker: true,
+    navigationTimeoutSeconds: 20,
+    landingSearchSeconds: 8,
+    maximumFlightSeconds: 30,
+  });
+
+  await waitFor(
+    `http://127.0.0.1:${autonomyPort}/api/autonomy`,
+    (status) => status.stage === 'completed' && status.readiness.every((check) => check.ok),
+    'named-pad mission readiness',
+  );
+
+  const stages = new Set();
+  await post('/api/autonomy/start', {});
+  const transferCompleted = await waitFor(
+    `http://127.0.0.1:${autonomyPort}/api/autonomy`,
+    (status) => status.stage === 'completed' && status.missionId === 2 && status.telemetry?.flyingState === 'landed',
+    'GPS transfer, AprilTag alignment, and precision landing mission',
+    35_000,
+    (status) => stages.add(status.stage),
+  );
+
+  for (const expected of ['navigating', 'searching-landing-pad', 'aligning-landing-pad', 'landing']) {
+    if (!stages.has(expected)) throw new Error(`Pad-transfer mission never reached ${expected}: ${[...stages].join(', ')}`);
+  }
+  if (transferCompleted.lastError) throw new Error(`Mission completed with error: ${transferCompleted.lastError}`);
+  if (!transferCompleted.navigation.semanticObservations.some((item) => item.semanticId === 'charging-dock')) {
+    throw new Error('AprilTag observation was not resolved through the semantic object registry');
+  }
 
   console.log(JSON.stringify({
     ok: true,
-    missionId: completed.missionId,
-    stage: completed.stage,
-    flyingState: completed.telemetry.flyingState,
-    altitude: completed.telemetry.altitude,
+    missions: transferCompleted.missionId,
+    finalStage: transferCompleted.stage,
+    flyingState: transferCompleted.telemetry.flyingState,
+    stages: [...stages],
+    targetPad: transferCompleted.navigation.targetPad?.name,
   }));
 } catch (error) {
   console.error(logs.join(''));
