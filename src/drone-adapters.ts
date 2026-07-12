@@ -397,10 +397,16 @@ export class BebopDrone extends EventEmitter implements DroneAdapter {
       this.snapshot.telemetry.signalRssi = rssi;
       update();
     });
-    this.client.on('altitude', (value: number) => {
-      this.snapshot.telemetry.altitude = value;
+    const updateAltitude = (event: unknown) => {
+      const altitude = objectNumber(event, 'altitude') ?? finite(event);
+      if (altitude === null) return;
+      this.snapshot.telemetry.altitude = altitude;
       update();
-    });
+    };
+    // node-bebop emits the raw ARCommands event as AltitudeChanged.
+    // Keep the lowercase listener for compatibility with alternate adapters.
+    this.client.on('AltitudeChanged', updateAltitude);
+    this.client.on('altitude', updateAltitude);
     this.client.on('PositionChanged', (event: unknown) => {
       const latitude = objectNumber(event, 'latitude');
       const longitude = objectNumber(event, 'longitude');

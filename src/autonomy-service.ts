@@ -580,7 +580,7 @@ function handleControlMessage(raw: WebSocket.RawData): void {
     sendControl({ type: 'drone.takeoff' });
   }
 
-  if (stage === 'taking-off' && drone && ['takingOff', 'hovering', 'flying'].includes(drone.telemetry.flyingState)) {
+  if (stage === 'taking-off' && drone && ['hovering', 'flying'].includes(drone.telemetry.flyingState)) {
     transition('climbing');
   }
 
