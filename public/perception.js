@@ -39,12 +39,19 @@ function queueRender() {
   });
 }
 
+function mapUnitInfo(snapshot) {
+  const metric = snapshot?.scaleSource === 'telemetry' || snapshot?.scaleSource === 'imu';
+  return metric
+    ? { suffix: 'm', description: `${snapshot.scaleSource} metric scale` }
+    : { suffix: 'u', description: 'monocular relative scale' };
+}
+
 function renderStatus() {
   if (!latestSnapshot || !latestHealth) return;
   const tracking = latestSnapshot.trackingState;
   $('perception-backend').textContent = `${latestHealth.backend} / ${latestSnapshot.source}`;
   $('perception-tracking').textContent = tracking;
-  $('perception-scale').textContent = latestSnapshot.scaleSource;
+  $('perception-scale').textContent = mapUnitInfo(latestSnapshot).description;
   $('perception-fps').textContent = `${latestSnapshot.metrics.slamFps.toFixed(1)} SLAM / ${latestSnapshot.metrics.detectionFps.toFixed(1)} detect`;
   $('perception-latency').textContent = `${latestSnapshot.metrics.endToEndLatencyMs.toFixed(0)} ms`;
   $('perception-features').textContent = latestSnapshot.metrics.trackedFeatures.toLocaleString();
@@ -294,6 +301,7 @@ class InteractiveSlamMap {
 
   renderGrid(bounds, fitScale, left, top) {
     this.grid.replaceChildren();
+    const unit = mapUnitInfo(this.lastSnapshot);
     const step = niceStep(Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY));
     const xStart = Math.ceil(bounds.minX / step) * step;
     const yStart = Math.ceil(bounds.minY / step) * step;
@@ -309,7 +317,7 @@ class InteractiveSlamMap {
       const label = svgElement('text');
       label.setAttribute('x', String(start.x + 3 / Math.max(1, this.scale)));
       label.setAttribute('y', String(top + 12 / Math.max(1, this.scale)));
-      label.textContent = `${Number(x.toFixed(2))}m`;
+      label.textContent = `${Number(x.toFixed(2))}${unit.suffix}`;
       this.grid.append(label);
     }
     for (let y = yStart; y <= bounds.maxY + step * 0.001; y += step) {
@@ -324,10 +332,11 @@ class InteractiveSlamMap {
       const label = svgElement('text');
       label.setAttribute('x', String(left + 4 / Math.max(1, this.scale)));
       label.setAttribute('y', String(start.y - 4 / Math.max(1, this.scale)));
-      label.textContent = `${Number(y.toFixed(2))}m`;
+      label.textContent = `${Number(y.toFixed(2))}${unit.suffix}`;
       this.grid.append(label);
     }
-    this.grid.dataset.metersPerPixel = String(1 / fitScale);
+    this.grid.dataset.unitsPerPixel = String(1 / fitScale);
+    this.grid.dataset.unit = unit.suffix;
   }
 
   renderLandmarks(landmarks) {
@@ -405,13 +414,14 @@ class InteractiveSlamMap {
         };
       }
     }
+    const unit = mapUnitInfo(this.lastSnapshot);
     for (const item of this.projectedLandmarks) {
       const distance = Math.hypot(item.x - base.x, item.y - base.y);
       if (distance <= threshold && (!best || distance < best.distance)) {
         const p = item.landmark.position;
         best = {
           distance,
-          text: `Landmark ${item.landmark.id}\n${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)} m\n${item.landmark.observations} observations`,
+          text: `Landmark ${item.landmark.id}\n${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)} ${unit.suffix}\n${item.landmark.observations} observations`,
         };
       }
     }
