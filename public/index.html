@@ -6,6 +6,7 @@
   <title>Bebop Web</title>
   <link rel="stylesheet" href="/styles.css" />
   <link rel="stylesheet" href="/readiness.css" />
+  <link rel="stylesheet" href="/altitude.css" />
 </head>
 <body>
   <main>
@@ -56,10 +57,18 @@
               <span id="signal">--</span>
             </dd>
           </div>
-          <div><dt>Altitude</dt><dd id="altitude">--</dd></div>
+          <div>
+            <dt>Height above takeoff</dt>
+            <dd class="height-reading"><strong id="height-feet">--</strong><span id="altitude">--</span></dd>
+          </div>
           <div><dt>Flight state</dt><dd id="flight-state">--</dd></div>
           <div><dt>Telemetry age</dt><dd id="telemetry-age">--</dd></div>
         </dl>
+        <div class="height-panel">
+          <meter id="altitude-meter" min="0" max="120" value="0">0</meter>
+          <div class="height-scale"><span>0 ft</span><span id="altitude-limit">--</span></div>
+          <p class="altitude-note">Height is relative to the takeoff point. It is not terrain-following AGL data.</p>
+        </div>
       </article>
       <article>
         <h2>Safety</h2>
@@ -68,6 +77,8 @@
           <div><dt>Arm expires</dt><dd id="arm-expires">--</dd></div>
           <div><dt>Controls allowed</dt><dd id="controls-allowed">No</dd></div>
           <div><dt>Takeoff allowed</dt><dd id="takeoff-allowed">No</dd></div>
+          <div><dt>Altitude mode</dt><dd id="altitude-mode">--</dd></div>
+          <div><dt>Height remaining</dt><dd id="altitude-remaining">--</dd></div>
         </dl>
         <ul id="safety-warnings"></ul>
       </article>
@@ -155,5 +166,6 @@
   </main>
   <script type="module" src="/app.js"></script>
   <script type="module" src="/readiness.js"></script>
+  <script type="module" src="/altitude.js"></script>
 </body>
 </html>
