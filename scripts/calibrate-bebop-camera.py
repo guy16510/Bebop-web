@@ -22,7 +22,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--samples", type=int, default=35)
     parser.add_argument("--sample-interval", type=float, default=0.45)
     parser.add_argument("--max-rms", type=float, default=1.5)
-    parser.add_argument("--fps", type=float, default=30.0)
+    parser.add_argument("--fps", type=int, default=30, help="Integer camera FPS required by ORB-SLAM3")
     return parser.parse_args()
 
 
@@ -33,7 +33,7 @@ def make_object_points(cols: int, rows: int, square_size: float) -> np.ndarray:
     return points
 
 
-def write_orb_settings(path: Path, width: int, height: int, fps: float, k: np.ndarray, d: np.ndarray, rms: float) -> None:
+def write_orb_settings(path: Path, width: int, height: int, fps: int, k: np.ndarray, d: np.ndarray, rms: float) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     values = {
         "fx": float(k[0, 0]),
@@ -62,7 +62,7 @@ Camera1.k3: {values["k3"]:.12f}
 Camera1.k4: {values["k4"]:.12f}
 Camera.width: {width}
 Camera.height: {height}
-Camera.fps: {fps:.3f}
+Camera.fps: {fps}
 Camera.RGB: 0
 
 ORBextractor.nFeatures: 1600
