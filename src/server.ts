@@ -287,6 +287,11 @@ const messageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('drone.takeoff') }),
   z.object({ type: z.literal('drone.land') }),
   z.object({ type: z.literal('drone.emergency') }),
+  z.object({
+    type: z.literal('drone.camera'),
+    tilt: z.number().finite().min(-100).max(100),
+    pan: z.number().finite().min(-100).max(100),
+  }),
   z.object({ type: z.literal('video.start') }),
   z.object({ type: z.literal('video.stop') }),
   z.object({
@@ -450,6 +455,10 @@ wss.on('connection', (socket) => {
           stopPiloting();
           await adapter.emergency();
           broadcastSafety();
+          break;
+        case 'drone.camera':
+          assertPilot(socket);
+          adapter.setCameraOrientation(message.tilt, message.pan);
           break;
         case 'video.start':
           await video.start();
