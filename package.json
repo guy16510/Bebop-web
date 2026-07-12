@@ -15,6 +15,9 @@
     "check:client": "node --check public/app.js && node --check public/readiness.js && node --check public/altitude.js && node --check public/perception.js",
     "test": "vitest run",
     "perception:smoke": "npm run build && node scripts/perception-smoke.mjs && node scripts/perception-server-smoke.mjs",
+    "perception:sidecar:build": "bash scripts/build-perception-sidecar.sh",
+    "perception:sidecar:self-test": "docker run --rm ${PERCEPTION_IMAGE:-bebop-perception-sidecar:local} --self-test",
+    "perception:calibrate": "python3 scripts/calibrate-bebop-camera.py",
     "video:inspect": "bash scripts/inspect-h264.sh"
   },
   "dependencies": {
