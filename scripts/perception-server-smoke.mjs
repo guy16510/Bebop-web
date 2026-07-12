@@ -11,6 +11,8 @@ const server = spawn(process.execPath, ['dist/src/server.js'], {
     DRONE_MODE: 'simulated',
     PERCEPTION_BACKEND: 'simulation',
     PERCEPTION_AUTO_START: 'true',
+    FEATURE_PERCEPTION_ENABLED: 'true',
+    RUNTIME_FEATURES_FILE: `/tmp/bebop-runtime-features-${process.pid}.json`,
     LOG_LEVEL: 'warn',
   },
   stdio: ['ignore', 'pipe', 'pipe'],
@@ -59,7 +61,7 @@ function waitForSocketMessage(socket, predicate, timeoutMs = 3_000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       socket.off('message', onMessage);
-      reject(new Error('Timed out waiting for WebSocket perception status'));
+      reject(new Error('Timed out waiting for WebSocket status'));
     }, timeoutMs);
     const onMessage = (raw) => {
       const value = JSON.parse(raw.toString());
@@ -77,6 +79,7 @@ try {
   const health = await waitForHttp('/api/health', (value) => value.ok === true);
   if (health.mode !== 'simulated') fail(`Expected simulated mode, got ${health.mode}`);
   if (health.perceptionBackend !== 'simulation') fail(`Expected simulation backend, got ${health.perceptionBackend}`);
+  if (health.features?.settings?.perception !== true) fail('Simulation perception feature did not start enabled');
 
   const status = await waitForHttp('/api/perception/status', (value) => (
     value.health?.state === 'running'
@@ -94,7 +97,10 @@ try {
     'id="map-export"',
     'data-map-layer="landmarks"',
     'id="detection-overlay"',
+    'data-runtime-feature="autoConnect"',
+    'data-runtime-feature="perception"',
     'src="/perception.js"',
+    'src="/features.js"',
   ]) {
     if (!dashboard.includes(marker)) fail(`Dashboard is missing ${marker}`);
   }
@@ -102,12 +108,29 @@ try {
   for (const marker of ['class InteractiveSlamMap', "addEventListener('wheel'", "addEventListener('pointerdown'", 'exportSnapshot()']) {
     if (!perceptionClient.includes(marker)) fail(`Perception client is missing ${marker}`);
   }
+  const featuresClient = await fetch(`${baseUrl}/features.js`).then((response) => response.text());
+  for (const marker of ["message.type === 'features.status'", "message.type === 'automation.status'", 'data-runtime-feature']) {
+    if (!featuresClient.includes(marker)) fail(`Feature client is missing ${marker}`);
+  }
   const perceptionCss = await fetch(`${baseUrl}/perception.css`).then((response) => response.text());
   for (const marker of ['.slam-trajectory', '.slam-landmark', '#map-tooltip']) {
     if (!perceptionCss.includes(marker)) fail(`Perception CSS is missing ${marker}`);
   }
 
   socket = await openSocket();
+
+  const featureUpdatePromise = waitForSocketMessage(socket, (message) => (
+    message.type === 'features.status'
+    && message.status?.settings?.showMap === false
+    && message.status?.updatedBy === 'web'
+  ));
+  socket.send(JSON.stringify({ type: 'features.set', settings: { showMap: false } }));
+  const featureUpdate = await featureUpdatePromise;
+  if (featureUpdate.status.revision < 1) fail('Feature revision did not increment');
+
+  const featureApi = await waitForHttp('/api/features', (value) => value.settings?.showMap === false);
+  if (featureApi.settings.perception !== true) fail('Display-only toggle unexpectedly disabled perception');
+
   socket.send(JSON.stringify({ type: 'perception.reset' }));
   const reset = await waitForSocketMessage(socket, (message) => (
     message.type === 'perception.status'
@@ -137,6 +160,8 @@ try {
     landmarks: restarted.snapshot.map.landmarks.length,
     trajectoryPoints: restarted.snapshot.trajectory.length,
     interactiveMap: true,
+    runtimeFeatures: true,
+    featureRevision: featureUpdate.status.revision,
   }, null, 2));
 } finally {
   socket?.close();
