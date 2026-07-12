@@ -84,10 +84,12 @@ let pilot: WebSocket | null = null;
 let desiredCommand = ZERO_COMMAND;
 let lastCommandAt = 0;
 let criticalLandingRequested = false;
+let shuttingDown = false;
 
 const messageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('pilot.acquire') }),
   z.object({ type: z.literal('pilot.release') }),
+  z.object({ type: z.literal('pilot.stop') }),
   z.object({
     type: z.literal('pilot.command'),
     command: z.object({
@@ -126,6 +128,16 @@ function broadcastSafety(): void {
   broadcast({ type: 'safety.status', status: safety.getStatus(adapter.getSnapshot()) });
 }
 
+function assertPilot(socket: WebSocket): void {
+  if (pilot !== socket) throw new Error('Pilot control not acquired');
+}
+
+function stopPiloting(): void {
+  desiredCommand = ZERO_COMMAND;
+  lastCommandAt = 0;
+  adapter.stopMovement();
+}
+
 adapter.onChange((snapshot) => {
   broadcast({ type: 'state', state: snapshot });
   broadcastSafety();
@@ -142,21 +154,36 @@ wss.on('connection', (socket) => {
       const message = messageSchema.parse(JSON.parse(raw.toString()));
       switch (message.type) {
         case 'pilot.acquire':
-          if (!pilot || pilot.readyState !== WebSocket.OPEN) pilot = socket;
+          if (!pilot || pilot.readyState !== WebSocket.OPEN) {
+            stopPiloting();
+            pilot = socket;
+          }
           socket.send(JSON.stringify({ type: pilot === socket ? 'pilot.granted' : 'pilot.denied' }));
           break;
         case 'pilot.release':
           if (pilot === socket) {
+            stopPiloting();
+            safety.disarm();
             pilot = null;
-            desiredCommand = ZERO_COMMAND;
-            adapter.stopMovement();
+            socket.send(JSON.stringify({ type: 'pilot.released' }));
+            broadcastSafety();
           }
           break;
+        case 'pilot.stop':
+          assertPilot(socket);
+          stopPiloting();
+          socket.send(JSON.stringify({ type: 'pilot.stopped' }));
+          break;
         case 'pilot.command': {
-          if (pilot !== socket) throw new Error('Pilot control not acquired');
+          assertPilot(socket);
           const candidate = clampCommand(message.command, maxCommand);
-          desiredCommand = safety.filterCommand(adapter.getSnapshot(), candidate.active) ? candidate : ZERO_COMMAND;
+          if (!candidate.active) {
+            stopPiloting();
+            break;
+          }
+          desiredCommand = safety.filterCommand(adapter.getSnapshot(), true) ? candidate : ZERO_COMMAND;
           lastCommandAt = Date.now();
+          if (!desiredCommand.active) adapter.stopMovement();
           break;
         }
         case 'drone.connect':
@@ -165,34 +192,36 @@ wss.on('connection', (socket) => {
           break;
         case 'drone.disconnect':
           safety.disarm();
-          desiredCommand = ZERO_COMMAND;
+          stopPiloting();
           await Promise.allSettled([video.stop(), rawVideo.stop()]);
           await adapter.disconnect();
+          broadcastSafety();
           break;
         case 'drone.arm':
+          assertPilot(socket);
           safety.arm(adapter.getSnapshot());
           broadcastSafety();
           break;
         case 'drone.disarm':
           safety.disarm();
+          stopPiloting();
           broadcastSafety();
           break;
         case 'drone.takeoff':
+          assertPilot(socket);
           safety.assertTakeoffAllowed(adapter.getSnapshot());
           await adapter.takeoff();
           broadcastSafety();
           break;
         case 'drone.land':
           safety.disarm();
-          desiredCommand = ZERO_COMMAND;
-          adapter.stopMovement();
+          stopPiloting();
           await adapter.land();
           broadcastSafety();
           break;
         case 'drone.emergency':
           safety.disarm();
-          desiredCommand = ZERO_COMMAND;
-          adapter.stopMovement();
+          stopPiloting();
           await adapter.emergency();
           broadcastSafety();
           break;
@@ -222,9 +251,8 @@ wss.on('connection', (socket) => {
   socket.on('close', () => {
     if (pilot === socket) {
       pilot = null;
-      desiredCommand = ZERO_COMMAND;
       safety.disarm();
-      adapter.stopMovement();
+      stopPiloting();
       broadcastSafety();
     }
   });
@@ -234,7 +262,14 @@ setInterval(() => {
   const snapshot = adapter.getSnapshot();
   if (!pilot || Date.now() - lastCommandAt > commandTimeoutMs) desiredCommand = ZERO_COMMAND;
   if (!safety.filterCommand(snapshot, desiredCommand.active)) desiredCommand = ZERO_COMMAND;
-  if (snapshot.connectionState === 'connected') adapter.setPilotingCommand(desiredCommand);
+  if (snapshot.connectionState !== 'connected') return;
+
+  try {
+    adapter.setPilotingCommand(desiredCommand);
+  } catch (error) {
+    stopPiloting();
+    log.error({ error }, 'Failed to apply piloting command');
+  }
 }, Math.round(1000 / commandRateHz));
 
 setInterval(async () => {
@@ -242,8 +277,7 @@ setInterval(async () => {
   const shouldLand = safety.shouldRequestLanding(snapshot);
   if (shouldLand && !criticalLandingRequested && snapshot.connectionState === 'connected') {
     criticalLandingRequested = true;
-    desiredCommand = ZERO_COMMAND;
-    adapter.stopMovement();
+    stopPiloting();
     log.warn({ battery: snapshot.telemetry.battery }, 'Critical battery, requesting landing');
     await adapter.land().catch((error) => log.error({ error }, 'Critical-battery landing failed'));
   }
@@ -258,10 +292,16 @@ server.listen(port, () => {
   log.info({ port, mode: process.env.DRONE_MODE ?? 'simulated' }, 'Bebop web server started');
 });
 
-process.on('SIGINT', async () => {
+async function shutdown(signal: NodeJS.Signals): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  log.info({ signal }, 'Shutting down Bebop web server');
   safety.disarm();
-  adapter.stopMovement();
+  stopPiloting();
   await Promise.allSettled([video.stop(), rawVideo.stop()]);
   await adapter.disconnect().catch(() => undefined);
   server.close(() => process.exit(0));
-});
+}
+
+process.on('SIGINT', () => void shutdown('SIGINT'));
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
