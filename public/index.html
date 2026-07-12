@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Bebop Web</title>
   <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/readiness.css" />
 </head>
 <body>
   <main>
@@ -72,6 +73,10 @@
       <article class="controls-card">
         <h2>Control diagnostics</h2>
         <p>This measures the browser to Node server path and confirms the exact command accepted by the adapter. The Bebop API does not provide an acknowledgement from each motor.</p>
+        <div class="readiness-panel" aria-live="polite">
+          <strong id="control-readiness" class="readiness-pending">NOT READY</strong>
+          <p id="control-readiness-detail">Run the 20-sample test, exercise one direction, release it, then press STOP.</p>
+        </div>
         <dl>
           <div><dt>WebSocket RTT</dt><dd id="ws-rtt">--</dd></div>
           <div><dt>WebSocket p95</dt><dd id="ws-p95">--</dd></div>
@@ -79,6 +84,7 @@
           <div><dt>Last STOP RTT</dt><dd id="stop-rtt">--</dd></div>
           <div><dt>Server apply time</dt><dd id="server-apply">--</dd></div>
         </dl>
+        <p>Green limits: p95 at or below 50 ms, command and STOP RTT at or below 75 ms, server apply at or below 5 ms. Yellow is usable but marginal. Red is a no-go.</p>
         <div class="toolbar">
           <button type="button" id="run-latency-test">Run 20-sample latency test</button>
           <span id="latency-test-status" class="status">Not run</span>
@@ -124,5 +130,6 @@
     <div id="message" role="status" aria-live="polite"></div>
   </main>
   <script type="module" src="/app.js"></script>
+  <script type="module" src="/readiness.js"></script>
 </body>
 </html>
