@@ -67,8 +67,12 @@ RUN mkdir -p /models /config \
 COPY perception-sidecar/config/bebop2.example.yaml /config/bebop2.example.yaml
 COPY perception-sidecar/entrypoint.sh /usr/local/bin/perception-entrypoint
 RUN chmod +x /usr/local/bin/perception-entrypoint \
-    && LD_LIBRARY_PATH=/opt/ORB_SLAM3/lib:/opt/ORB_SLAM3/Thirdparty/DBoW2/lib:/opt/ORB_SLAM3/Thirdparty/g2o/lib \
-      /usr/local/bin/bebop-perception-sidecar --self-test | grep -q 'perception.snapshot'
+    && export LD_LIBRARY_PATH=/opt/ORB_SLAM3/lib:/opt/ORB_SLAM3/Thirdparty/DBoW2/lib:/opt/ORB_SLAM3/Thirdparty/g2o/lib:/usr/local/lib \
+    && /usr/local/bin/bebop-perception-sidecar --self-test | grep -q 'perception.snapshot' \
+    && ORB_SETTINGS=/config/bebop2.example.yaml \
+       /usr/local/bin/bebop-perception-engine-self-test > /tmp/perception-engine-self-test.json \
+    && grep -q '"inferenceExecuted":true' /tmp/perception-engine-self-test.json \
+    && grep -q '"systemConstructed":true' /tmp/perception-engine-self-test.json
 
 ENV ORB_VOCABULARY=/opt/ORB_SLAM3/Vocabulary/ORBvoc.txt \
     ORB_SETTINGS=/config/bebop2.yaml \
