@@ -4,13 +4,13 @@
 #include <cmath>
 #include <condition_variable>
 #include <csignal>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <limits>
 #include <mutex>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -34,9 +34,9 @@ using Clock = std::chrono::steady_clock;
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
-std::atomic<bool> g_alive{true};
+std::atomic<bool> gAlive{true};
 
-void onSignal(int) { g_alive.store(false); }
+void onSignal(int) { gAlive.store(false); }
 
 std::string envString(const char* name, const std::string& fallback = {}) {
   const char* value = std::getenv(name);
@@ -107,17 +107,20 @@ json poseJson(const Pose& pose) {
           {"roll", pose.roll}, {"pitch", pose.pitch}, {"yaw", pose.yaw}};
 }
 
-Pose convertPose(const Sophus::SE3f& tcw, double scale, const std::optional<Telemetry>& telemetry) {
+Pose convertPose(const Sophus::SE3f& tcw, double scale,
+                 const std::optional<Telemetry>& telemetry) {
   const Sophus::SE3f twc = tcw.inverse();
   const Eigen::Matrix3f rotation = twc.rotationMatrix();
   const Eigen::Vector3f translation = twc.translation();
   Pose pose;
-  // ORB camera coordinates are X right, Y down, Z forward. Dashboard coordinates are X right,
-  // Y forward, Z up.
+  // ORB camera coordinates are X right, Y down, Z forward. Dashboard coordinates are
+  // X right, Y forward, Z up.
   pose.x = static_cast<double>(translation.x()) * scale;
   pose.y = static_cast<double>(translation.z()) * scale;
   pose.z = -static_cast<double>(translation.y()) * scale;
-  if (telemetry && epochMillis() - telemetry->updatedAt < 1500) pose.z = telemetry->altitude;
+  if (telemetry && epochMillis() - telemetry->updatedAt < 1500) {
+    pose.z = telemetry->altitude;
+  }
   pose.yaw = std::atan2(rotation(0, 2), rotation(2, 2));
   pose.pitch = std::asin(std::clamp(-static_cast<double>(rotation(1, 2)), -1.0, 1.0));
   pose.roll = std::atan2(rotation(1, 0), rotation(1, 1));
@@ -134,9 +137,9 @@ struct DetectionTrack {
 };
 
 float intersectionOverUnion(const cv::Rect2f& a, const cv::Rect2f& b) {
-  const float area = (a & b).area();
-  const float total = a.area() + b.area() - area;
-  return total > 0 ? area / total : 0;
+  const float intersectionArea = (a & b).area();
+  const float unionArea = a.area() + b.area() - intersectionArea;
+  return unionArea > 0 ? intersectionArea / unionArea : 0;
 }
 
 const std::vector<std::string>& cocoLabels() {
@@ -177,6 +180,11 @@ class YoloXDetector {
   bool ready() const { return ready_; }
   double lastInferenceMs() const { return lastInferenceMs_; }
 
+  void resetTracks() {
+    previous_.clear();
+    nextTrackId_ = 1;
+  }
+
   std::vector<DetectionTrack> detect(const cv::Mat& frame, std::int64_t now) {
     if (!ready_ || frame.empty()) return {};
     const auto started = Clock::now();
@@ -193,7 +201,11 @@ class YoloXDetector {
     net_.setInput(blob);
     cv::Mat output = net_.forward();
     cv::Mat rows = flattenOutput(output);
-    if (rows.empty() || rows.cols < 85) return {};
+    if (rows.empty() || rows.cols < 85) {
+      lastInferenceMs_ =
+          std::chrono::duration<double, std::milli>(Clock::now() - started).count();
+      return {};
+    }
     if (!outputDecoded_) decodeRows(rows);
 
     std::vector<cv::Rect> boxes;
@@ -217,10 +229,14 @@ class YoloXDetector {
       const float centerY = values[1] / ratio;
       const float width = values[2] / ratio;
       const float height = values[3] / ratio;
-      const int left = std::clamp(static_cast<int>(centerX - width / 2), 0, frame.cols - 1);
-      const int top = std::clamp(static_cast<int>(centerY - height / 2), 0, frame.rows - 1);
-      const int right = std::clamp(static_cast<int>(centerX + width / 2), left + 1, frame.cols);
-      const int bottom = std::clamp(static_cast<int>(centerY + height / 2), top + 1, frame.rows);
+      const int left =
+          std::clamp(static_cast<int>(centerX - width / 2), 0, frame.cols - 1);
+      const int top =
+          std::clamp(static_cast<int>(centerY - height / 2), 0, frame.rows - 1);
+      const int right =
+          std::clamp(static_cast<int>(centerX + width / 2), left + 1, frame.cols);
+      const int bottom =
+          std::clamp(static_cast<int>(centerY + height / 2), top + 1, frame.rows);
       boxes.emplace_back(left, top, right - left, bottom - top);
       scores.push_back(score);
       classes.push_back(bestClass);
@@ -240,7 +256,8 @@ class YoloXDetector {
       candidates.push_back(candidate);
     }
     assignTrackIds(candidates, now);
-    lastInferenceMs_ = std::chrono::duration<double, std::milli>(Clock::now() - started).count();
+    lastInferenceMs_ =
+        std::chrono::duration<double, std::milli>(Clock::now() - started).count();
     return candidates;
   }
 
@@ -297,9 +314,9 @@ class YoloXDetector {
         }
       }
       if (best >= 0) {
-        used[best] = true;
-        candidate.id = previous_[best].id;
-        candidate.firstSeenAt = previous_[best].firstSeenAt;
+        used[static_cast<std::size_t>(best)] = true;
+        candidate.id = previous_[static_cast<std::size_t>(best)].id;
+        candidate.firstSeenAt = previous_[static_cast<std::size_t>(best)].firstSeenAt;
       } else {
         candidate.id = candidate.label + "-" + std::to_string(nextTrackId_++);
       }
@@ -321,10 +338,14 @@ class YoloXDetector {
 
 json detectionJson(const DetectionTrack& detection, const cv::Size& frameSize,
                    const std::optional<Pose>& pose) {
-  const double x = std::clamp(detection.box.x / frameSize.width, 0.0F, 1.0F);
-  const double y = std::clamp(detection.box.y / frameSize.height, 0.0F, 1.0F);
-  const double width = std::clamp(detection.box.width / frameSize.width, 0.0001F, 1.0F - x);
-  const double height = std::clamp(detection.box.height / frameSize.height, 0.0001F, 1.0F - y);
+  const double frameWidth = static_cast<double>(frameSize.width);
+  const double frameHeight = static_cast<double>(frameSize.height);
+  const double x = std::clamp(static_cast<double>(detection.box.x) / frameWidth, 0.0, 1.0);
+  const double y = std::clamp(static_cast<double>(detection.box.y) / frameHeight, 0.0, 1.0);
+  const double width = std::clamp(static_cast<double>(detection.box.width) / frameWidth,
+                                  0.0001, std::max(0.0001, 1.0 - x));
+  const double height = std::clamp(static_cast<double>(detection.box.height) / frameHeight,
+                                   0.0001, std::max(0.0001, 1.0 - y));
   json result = {{"id", detection.id},
                  {"label", detection.label},
                  {"recognizedName", detection.label},
@@ -333,15 +354,80 @@ json detectionJson(const DetectionTrack& detection, const cv::Size& frameSize,
                  {"firstSeenAt", detection.firstSeenAt},
                  {"lastSeenAt", detection.lastSeenAt}};
   if (pose && envBool("OBJECT_POSITION_ESTIMATE", false)) {
-    const double horizontalFov = envDouble("CAMERA_HORIZONTAL_FOV_DEGREES", 90) * kPi / 180.0;
+    const double horizontalFov =
+        envDouble("CAMERA_HORIZONTAL_FOV_DEGREES", 90) * kPi / 180.0;
     const double center = x + width / 2.0;
     const double angle = (center - 0.5) * horizontalFov;
     const double range = envDouble("OBJECT_RANGE_ESTIMATE_METERS", 2.5);
-    result["worldPosition"] = {{"x", pose->x + range * std::sin(pose->yaw + angle)},
-                               {"y", pose->y + range * std::cos(pose->yaw + angle)},
-                               {"z", 0.0}};
+    result["worldPosition"] = {
+        {"x", pose->x + range * std::sin(pose->yaw + angle)},
+        {"y", pose->y + range * std::cos(pose->yaw + angle)}, {"z", 0.0}};
   }
   return result;
+}
+
+struct CachedLandmark {
+  unsigned long id = 0;
+  Eigen::Vector3f world = Eigen::Vector3f::Zero();
+  int observations = 0;
+  double quality = 0;
+  std::uint64_t lastSeenSequence = 0;
+};
+
+using LandmarkCache = std::unordered_map<unsigned long, CachedLandmark>;
+
+void updateLandmarkCache(LandmarkCache& cache, const std::vector<ORB_SLAM3::MapPoint*>& points,
+                         std::uint64_t sequence, std::size_t maxLandmarks) {
+  for (ORB_SLAM3::MapPoint* point : points) {
+    if (!point || point->isBad()) continue;
+    CachedLandmark& cached = cache[point->mnId];
+    cached.id = point->mnId;
+    cached.world = point->GetWorldPos();
+    cached.observations = std::max(0, point->Observations());
+    cached.quality =
+        std::clamp(static_cast<double>(point->GetFoundRatio()), 0.0, 1.0);
+    cached.lastSeenSequence = sequence;
+  }
+
+  if (cache.size() <= maxLandmarks) return;
+  std::vector<CachedLandmark> ranked;
+  ranked.reserve(cache.size());
+  for (const auto& [id, item] : cache) {
+    (void)id;
+    ranked.push_back(item);
+  }
+  std::sort(ranked.begin(), ranked.end(), [](const CachedLandmark& a, const CachedLandmark& b) {
+    if (a.lastSeenSequence != b.lastSeenSequence) {
+      return a.lastSeenSequence > b.lastSeenSequence;
+    }
+    if (a.quality != b.quality) return a.quality > b.quality;
+    return a.observations > b.observations;
+  });
+  for (std::size_t index = maxLandmarks; index < ranked.size(); ++index) {
+    cache.erase(ranked[index].id);
+  }
+}
+
+json landmarkJson(const LandmarkCache& cache) {
+  std::vector<CachedLandmark> ordered;
+  ordered.reserve(cache.size());
+  for (const auto& [id, item] : cache) {
+    (void)id;
+    ordered.push_back(item);
+  }
+  std::sort(ordered.begin(), ordered.end(), [](const CachedLandmark& a, const CachedLandmark& b) {
+    return a.id < b.id;
+  });
+
+  json landmarks = json::array();
+  for (const auto& item : ordered) {
+    landmarks.push_back(
+        {{"id", "mp-" + std::to_string(item.id)},
+         {"position", {{"x", item.world.x()}, {"y", item.world.z()}, {"z", -item.world.y()}}},
+         {"observations", item.observations},
+         {"quality", item.quality}});
+  }
+  return landmarks;
 }
 
 json boundsFor(const std::vector<Pose>& trajectory, const json& landmarks) {
@@ -352,34 +438,55 @@ json boundsFor(const std::vector<Pose>& trajectory, const json& landmarks) {
   double minZ = std::numeric_limits<double>::infinity();
   double maxZ = -std::numeric_limits<double>::infinity();
   auto include = [&](double x, double y, double z) {
-    minX = std::min(minX, x); maxX = std::max(maxX, x);
-    minY = std::min(minY, y); maxY = std::max(maxY, y);
-    minZ = std::min(minZ, z); maxZ = std::max(maxZ, z);
+    minX = std::min(minX, x);
+    maxX = std::max(maxX, x);
+    minY = std::min(minY, y);
+    maxY = std::max(maxY, y);
+    minZ = std::min(minZ, z);
+    maxZ = std::max(maxZ, z);
   };
   for (const auto& pose : trajectory) include(pose.x, pose.y, pose.z);
   for (const auto& landmark : landmarks) {
-    const auto& p = landmark["position"];
-    include(p["x"].get<double>(), p["y"].get<double>(), p["z"].get<double>());
+    const auto& position = landmark["position"];
+    include(position["x"].get<double>(), position["y"].get<double>(),
+            position["z"].get<double>());
   }
-  if (!std::isfinite(minX)) return {{"minX", -5}, {"maxX", 5}, {"minY", -5}, {"maxY", 5}, {"minZ", -1}, {"maxZ", 3}};
-  const double padding = std::max(0.5, std::max(maxX - minX, maxY - minY) * 0.08);
-  if (maxX - minX < 0.1) { minX -= 1; maxX += 1; }
-  if (maxY - minY < 0.1) { minY -= 1; maxY += 1; }
-  if (maxZ - minZ < 0.1) { minZ -= 0.5; maxZ += 0.5; }
+  if (!std::isfinite(minX)) {
+    return {{"minX", -5}, {"maxX", 5},  {"minY", -5},
+            {"maxY", 5},  {"minZ", -1}, {"maxZ", 3}};
+  }
+  const double padding =
+      std::max(0.5, std::max(maxX - minX, maxY - minY) * 0.08);
+  if (maxX - minX < 0.1) {
+    minX -= 1;
+    maxX += 1;
+  }
+  if (maxY - minY < 0.1) {
+    minY -= 1;
+    maxY += 1;
+  }
+  if (maxZ - minZ < 0.1) {
+    minZ -= 0.5;
+    maxZ += 0.5;
+  }
   return {{"minX", minX - padding}, {"maxX", maxX + padding},
           {"minY", minY - padding}, {"maxY", maxY + padding},
-          {"minZ", minZ}, {"maxZ", maxZ}};
+          {"minZ", minZ},           {"maxZ", maxZ}};
 }
 
 std::string trackingStateName(int state) {
-  if (state == ORB_SLAM3::Tracking::OK || state == ORB_SLAM3::Tracking::OK_KLT) return "tracking";
-  if (state == ORB_SLAM3::Tracking::RECENTLY_LOST || state == ORB_SLAM3::Tracking::LOST) return "lost";
+  if (state == ORB_SLAM3::Tracking::OK || state == ORB_SLAM3::Tracking::OK_KLT) {
+    return "tracking";
+  }
+  if (state == ORB_SLAM3::Tracking::RECENTLY_LOST || state == ORB_SLAM3::Tracking::LOST) {
+    return "lost";
+  }
   return "initializing";
 }
 
 void readControl(RuntimeControl& control) {
   std::string line;
-  while (g_alive.load() && std::getline(std::cin, line)) {
+  while (gAlive.load() && std::getline(std::cin, line)) {
     if (line.empty()) continue;
     try {
       const json message = json::parse(line);
@@ -387,13 +494,14 @@ void readControl(RuntimeControl& control) {
       std::lock_guard<std::mutex> lock(control.mutex);
       if (type == "start") {
         control.videoUrl = message.value("videoUrl", "");
-        control.requireCalibration = message.value("slam", json::object()).value("requireCalibration", true);
+        control.requireCalibration =
+            message.value("slam", json::object()).value("requireCalibration", true);
         control.started = true;
         control.stopRequested = false;
         control.condition.notify_all();
       } else if (type == "stop") {
         control.stopRequested = true;
-        g_alive.store(false);
+        gAlive.store(false);
         control.condition.notify_all();
       } else if (type == "reset") {
         control.resetRequested = true;
@@ -425,10 +533,59 @@ json selfTestSnapshot() {
             {"pose", {{"x", 0}, {"y", 0}, {"z", 0}, {"roll", 0}, {"pitch", 0}, {"yaw", 0}}},
             {"trajectory", json::array()},
             {"detections", json::array()},
-            {"map", {{"bounds", {{"minX", -1}, {"maxX", 1}, {"minY", -1}, {"maxY", 1}, {"minZ", -1}, {"maxZ", 1}}},
-                     {"landmarks", json::array()}}},
-            {"metrics", {{"inputFps", 0}, {"slamFps", 0}, {"detectionFps", 0}, {"inferenceMs", 0},
-                         {"endToEndLatencyMs", 0}, {"trackedFeatures", 0}, {"keyframes", 0}, {"loopClosures", 0}}}}}};
+            {"map",
+             {{"bounds",
+               {{"minX", -1}, {"maxX", 1}, {"minY", -1},
+                {"maxY", 1},  {"minZ", -1}, {"maxZ", 1}}},
+              {"landmarks", json::array()}}},
+            {"metrics",
+             {{"inputFps", 0},
+              {"slamFps", 0},
+              {"detectionFps", 0},
+              {"inferenceMs", 0},
+              {"endToEndLatencyMs", 0},
+              {"trackedFeatures", 0},
+              {"keyframes", 0},
+              {"loopClosures", 0}}}}}};
+}
+
+json componentSelfTest(const std::string& vocabulary, const std::string& settings,
+                       const std::string& model) {
+  if (!std::filesystem::exists(vocabulary)) {
+    throw std::runtime_error("ORB vocabulary missing: " + vocabulary);
+  }
+  if (!std::filesystem::exists(settings)) {
+    throw std::runtime_error("ORB settings missing: " + settings);
+  }
+  if (!std::filesystem::exists(model)) {
+    throw std::runtime_error("YOLOX model missing: " + model);
+  }
+
+  YoloXDetector detector(model);
+  if (!detector.ready()) throw std::runtime_error("YOLOX model failed to load");
+  cv::Mat synthetic(416, 416, CV_8UC3, cv::Scalar(114, 114, 114));
+  cv::rectangle(synthetic, cv::Rect(80, 70, 170, 250), cv::Scalar(220, 220, 220), -1);
+  cv::circle(synthetic, cv::Point(300, 190), 45, cv::Scalar(20, 160, 220), -1);
+  detector.detect(synthetic, epochMillis());
+
+  ORB_SLAM3::System slam(vocabulary, settings, ORB_SLAM3::System::MONOCULAR, false);
+  cv::Mat textured(276, 480, CV_8UC3, cv::Scalar(0, 0, 0));
+  for (int y = 12; y < textured.rows; y += 18) {
+    for (int x = 12; x < textured.cols; x += 18) {
+      const int shade = 50 + ((x * 17 + y * 31) % 190);
+      cv::circle(textured, cv::Point(x, y), 3, cv::Scalar(shade, shade, shade), -1);
+    }
+  }
+  slam.TrackMonocular(textured, 0.0);
+  const int trackingState = slam.GetTrackingState();
+  slam.Shutdown();
+
+  return {{"type", "component.self-test"},
+          {"ok", true},
+          {"detectorReady", detector.ready()},
+          {"detectorInferenceMs", detector.lastInferenceMs()},
+          {"slamInitialized", true},
+          {"slamTrackingStateAfterOneFrame", trackingState}};
 }
 
 }  // namespace
@@ -437,20 +594,32 @@ int main(int argc, char** argv) {
   std::signal(SIGINT, onSignal);
   std::signal(SIGTERM, onSignal);
 
-  // ORB-SLAM3 writes diagnostics to stdout. Preserve the original stdout stream exclusively for
-  // newline-delimited protocol messages and redirect library chatter to stderr.
+  // ORB-SLAM3 writes diagnostics to stdout. Keep stdout exclusively for newline-delimited
+  // protocol messages and redirect library chatter to stderr.
   std::streambuf* protocolBuffer = std::cout.rdbuf();
   std::ostream protocol(protocolBuffer);
   std::cout.rdbuf(std::cerr.rdbuf());
+
+  const std::string vocabulary =
+      envString("ORB_VOCABULARY", "/opt/ORB_SLAM3/Vocabulary/ORBvoc.txt");
+  const std::string settings = envString("ORB_SETTINGS", "/config/bebop2.yaml");
+  const std::string model = envString("YOLOX_MODEL", "/models/yolox_tiny.onnx");
 
   if (argc > 1 && std::string(argv[1]) == "--self-test") {
     protocol << selfTestSnapshot().dump() << '\n' << std::flush;
     return 0;
   }
+  if (argc > 1 && std::string(argv[1]) == "--component-self-test") {
+    try {
+      protocol << componentSelfTest(vocabulary, settings, model).dump() << '\n'
+               << std::flush;
+      return 0;
+    } catch (const std::exception& error) {
+      std::cerr << "Component self-test failed: " << error.what() << '\n';
+      return 10;
+    }
+  }
 
-  const std::string vocabulary = envString("ORB_VOCABULARY", "/opt/ORB_SLAM3/Vocabulary/ORBvoc.txt");
-  const std::string settings = envString("ORB_SETTINGS", "/config/bebop2.yaml");
-  const std::string model = envString("YOLOX_MODEL", "/models/yolox_tiny.onnx");
   const bool calibrated = envBool("PERCEPTION_CAMERA_CALIBRATED", false);
   if (!std::filesystem::exists(vocabulary)) {
     std::cerr << "ORB vocabulary not found: " << vocabulary << '\n';
@@ -466,10 +635,13 @@ int main(int argc, char** argv) {
   controlThread.detach();
   {
     std::unique_lock<std::mutex> lock(control.mutex);
-    control.condition.wait(lock, [&] { return control.started || !g_alive.load(); });
-    if (!g_alive.load()) return 0;
-    if (control.requireCalibration && !calibrated && !envBool("PERCEPTION_ALLOW_UNCALIBRATED", false)) {
-      std::cerr << "Camera calibration gate blocked startup. Set ORB_SETTINGS to the measured Bebop stream calibration and PERCEPTION_CAMERA_CALIBRATED=true.\n";
+    control.condition.wait(lock, [&] { return control.started || !gAlive.load(); });
+    if (!gAlive.load()) return 0;
+    if (control.requireCalibration && !calibrated &&
+        !envBool("PERCEPTION_ALLOW_UNCALIBRATED", false)) {
+      std::cerr
+          << "Camera calibration gate blocked startup. Set ORB_SETTINGS to the measured Bebop "
+             "stream calibration and PERCEPTION_CAMERA_CALIBRATED=true.\n";
       return 3;
     }
   }
@@ -486,7 +658,9 @@ int main(int argc, char** argv) {
 
   ORB_SLAM3::System slam(vocabulary, settings, ORB_SLAM3::System::MONOCULAR, false);
   YoloXDetector detector(model);
-  if (!detector.ready()) std::cerr << "YOLOX model unavailable; SLAM will run without detections: " << model << '\n';
+  if (!detector.ready()) {
+    std::cerr << "YOLOX model unavailable; SLAM will run without detections: " << model << '\n';
+  }
 
   cv::VideoCapture capture;
   capture.open(videoUrl, cv::CAP_FFMPEG);
@@ -500,8 +674,10 @@ int main(int argc, char** argv) {
 
   const int updateHz = std::clamp(envInt("PERCEPTION_OUTPUT_HZ", 10), 1, 30);
   const int detectEvery = std::max(1, envInt("DETECTION_EVERY_N_FRAMES", 3));
-  const std::size_t maxTrajectory = static_cast<std::size_t>(std::max(30, envInt("MAX_TRAJECTORY_POINTS", 900)));
-  const std::size_t maxLandmarks = static_cast<std::size_t>(std::max(100, envInt("MAX_LANDMARKS", 2500)));
+  const std::size_t maxTrajectory =
+      static_cast<std::size_t>(std::max(30, envInt("MAX_TRAJECTORY_POINTS", 900)));
+  const std::size_t maxLandmarks =
+      static_cast<std::size_t>(std::max(100, envInt("MAX_LANDMARKS", 2500)));
   const auto outputInterval = std::chrono::milliseconds(1000 / updateHz);
   auto lastOutput = Clock::now() - outputInterval;
   auto lastFrame = Clock::now();
@@ -512,15 +688,18 @@ int main(int argc, char** argv) {
   std::uint64_t loopClosures = 0;
   std::vector<Pose> trajectory;
   std::vector<DetectionTrack> detections;
+  LandmarkCache landmarkCache;
 
-  while (g_alive.load()) {
+  while (gAlive.load()) {
     {
       std::lock_guard<std::mutex> lock(control.mutex);
       if (control.stopRequested) break;
       if (control.resetRequested) {
         slam.Reset();
+        detector.resetTracks();
         trajectory.clear();
         detections.clear();
+        landmarkCache.clear();
         control.resetRequested = false;
       }
     }
@@ -538,15 +717,21 @@ int main(int argc, char** argv) {
       }
       break;
     }
-    const double frameSeconds = std::chrono::duration<double>(frameStarted - lastFrame).count();
+    const double frameSeconds =
+        std::chrono::duration<double>(frameStarted - lastFrame).count();
     lastFrame = frameStarted;
-    if (frameSeconds > 0) inputFps = inputFps == 0 ? 1.0 / frameSeconds : inputFps * 0.9 + (1.0 / frameSeconds) * 0.1;
+    if (frameSeconds > 0) {
+      inputFps = inputFps == 0 ? 1.0 / frameSeconds
+                               : inputFps * 0.9 + (1.0 / frameSeconds) * 0.1;
+    }
 
     const auto slamStarted = Clock::now();
     const Sophus::SE3f tcw = slam.TrackMonocular(frame, steadySeconds());
-    const double slamMs = std::chrono::duration<double, std::milli>(Clock::now() - slamStarted).count();
+    const double slamMs =
+        std::chrono::duration<double, std::milli>(Clock::now() - slamStarted).count();
     const int state = slam.GetTrackingState();
-    const bool tracking = state == ORB_SLAM3::Tracking::OK || state == ORB_SLAM3::Tracking::OK_KLT;
+    const bool tracking =
+        state == ORB_SLAM3::Tracking::OK || state == ORB_SLAM3::Tracking::OK_KLT;
     std::optional<Telemetry> telemetry;
     {
       std::lock_guard<std::mutex> lock(control.mutex);
@@ -556,13 +741,19 @@ int main(int argc, char** argv) {
     if (tracking) {
       pose = convertPose(tcw, 1.0, telemetry);
       trajectory.push_back(*pose);
-      if (trajectory.size() > maxTrajectory) trajectory.erase(trajectory.begin(), trajectory.begin() + (trajectory.size() - maxTrajectory));
+      if (trajectory.size() > maxTrajectory) {
+        trajectory.erase(trajectory.begin(),
+                         trajectory.begin() +
+                             static_cast<std::ptrdiff_t>(trajectory.size() - maxTrajectory));
+      }
     }
     if (slam.MapChanged()) ++loopClosures;
 
     if (frameNumber % static_cast<std::uint64_t>(detectEvery) == 0 && detector.ready()) {
       detections = detector.detect(frame, epochMillis());
-      if (detector.lastInferenceMs() > 0) detectionFps = 1000.0 / detector.lastInferenceMs();
+      if (detector.lastInferenceMs() > 0) {
+        detectionFps = 1000.0 / detector.lastInferenceMs();
+      }
     }
     ++frameNumber;
 
@@ -570,45 +761,42 @@ int main(int argc, char** argv) {
     if (nowSteady - lastOutput < outputInterval) continue;
     lastOutput = nowSteady;
 
-    json landmarks = json::array();
-    std::unordered_map<unsigned long, bool> seen;
-    for (ORB_SLAM3::MapPoint* point : slam.GetTrackedMapPoints()) {
-      if (!point || point->isBad() || seen[point->mnId]) continue;
-      seen[point->mnId] = true;
-      const Eigen::Vector3f world = point->GetWorldPos();
-      landmarks.push_back({{"id", "mp-" + std::to_string(point->mnId)},
-                           {"position", {{"x", world.x()}, {"y", world.z()}, {"z", -world.y()}}},
-                           {"observations", std::max(0, point->Observations())},
-                           {"quality", std::clamp(static_cast<double>(point->GetFoundRatio()), 0.0, 1.0)}});
-      if (landmarks.size() >= maxLandmarks) break;
-    }
-
+    updateLandmarkCache(landmarkCache, slam.GetTrackedMapPoints(), sequence + 1,
+                        maxLandmarks);
+    const json landmarks = landmarkJson(landmarkCache);
     json trajectoryJson = json::array();
     for (const auto& item : trajectory) trajectoryJson.push_back(poseJson(item));
     json detectionArray = json::array();
-    for (const auto& item : detections) detectionArray.push_back(detectionJson(item, frame.size(), pose));
+    for (const auto& item : detections) {
+      detectionArray.push_back(detectionJson(item, frame.size(), pose));
+    }
     const auto timestamp = epochMillis();
-    const double latencyMs = std::chrono::duration<double, std::milli>(Clock::now() - frameStarted).count();
-    json snapshot = {{"sequence", ++sequence},
-                     {"timestamp", timestamp},
-                     {"backend", "external"},
-                     {"source", detector.ready() ? "orb-slam3-yolox-opencv" : "orb-slam3"},
-                     {"trackingState", trackingStateName(state)},
-                     {"calibrated", calibrated},
-                     {"scaleSource", "monocular"},
-                     {"pose", pose ? poseJson(*pose) : json(nullptr)},
-                     {"trajectory", trajectoryJson},
-                     {"detections", detectionArray},
-                     {"map", {{"bounds", boundsFor(trajectory, landmarks)}, {"landmarks", landmarks}}},
-                     {"metrics", {{"inputFps", inputFps},
-                                  {"slamFps", slamMs > 0 ? 1000.0 / slamMs : 0.0},
-                                  {"detectionFps", detectionFps},
-                                  {"inferenceMs", detector.lastInferenceMs()},
-                                  {"endToEndLatencyMs", latencyMs},
-                                  {"trackedFeatures", static_cast<int>(slam.GetTrackedKeyPointsUn().size())},
-                                  {"keyframes", 0},
-                                  {"loopClosures", loopClosures}}}};
-    protocol << json({{"type", "perception.snapshot"}, {"snapshot", snapshot}}).dump() << '\n' << std::flush;
+    const double latencyMs =
+        std::chrono::duration<double, std::milli>(Clock::now() - frameStarted).count();
+    json snapshot = {
+        {"sequence", ++sequence},
+        {"timestamp", timestamp},
+        {"backend", "external"},
+        {"source", detector.ready() ? "orb-slam3-yolox-opencv" : "orb-slam3"},
+        {"trackingState", trackingStateName(state)},
+        {"calibrated", calibrated},
+        {"scaleSource", "monocular"},
+        {"pose", pose ? poseJson(*pose) : json(nullptr)},
+        {"trajectory", trajectoryJson},
+        {"detections", detectionArray},
+        {"map", {{"bounds", boundsFor(trajectory, landmarks)}, {"landmarks", landmarks}}},
+        {"metrics",
+         {{"inputFps", inputFps},
+          {"slamFps", slamMs > 0 ? 1000.0 / slamMs : 0.0},
+          {"detectionFps", detectionFps},
+          {"inferenceMs", detector.lastInferenceMs()},
+          {"endToEndLatencyMs", latencyMs},
+          {"trackedFeatures", static_cast<int>(slam.GetTrackedKeyPointsUn().size())},
+          {"keyframes", 0},
+          {"loopClosures", loopClosures}}}};
+    protocol << json({{"type", "perception.snapshot"}, {"snapshot", snapshot}}).dump()
+             << '\n'
+             << std::flush;
   }
 
   capture.release();
