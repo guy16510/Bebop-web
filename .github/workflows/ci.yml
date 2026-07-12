@@ -20,3 +20,37 @@ jobs:
       - run: npm run build
       - run: node scripts/perception-smoke.mjs
       - run: node scripts/perception-server-smoke.mjs
+      - name: Validate calibration script syntax
+        run: python3 -m py_compile scripts/calibrate-bebop-camera.py
+
+  perception-sidecar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build pinned ORB-SLAM3 and YOLOX sidecar
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: perception-sidecar/Dockerfile
+          load: true
+          tags: bebop-perception-sidecar:ci
+          cache-from: type=gha,scope=bebop-perception-sidecar
+          cache-to: type=gha,mode=max,scope=bebop-perception-sidecar
+      - name: Execute linked sidecar protocol self-test
+        run: |
+          docker run --rm bebop-perception-sidecar:ci --self-test > /tmp/sidecar-self-test.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          value = json.loads(Path('/tmp/sidecar-self-test.json').read_text())
+          assert value['type'] == 'perception.snapshot'
+          snapshot = value['snapshot']
+          assert snapshot['backend'] == 'external'
+          assert snapshot['source'] == 'orb-slam3-yolox-self-test'
+          assert snapshot['trackingState'] == 'tracking'
+          assert snapshot['calibrated'] is True
+          assert snapshot['map']['bounds']['minX'] < snapshot['map']['bounds']['maxX']
+          print(json.dumps({'ok': True, 'source': snapshot['source']}))
+          PY
