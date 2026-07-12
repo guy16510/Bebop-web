@@ -33,6 +33,10 @@ function setReadinessClass(element, state) {
   element.classList.add(`readiness-${state}`);
 }
 
+function setText(element, value) {
+  if (element && element.textContent !== value) element.textContent = value;
+}
+
 function stopCommandIsNeutral() {
   const text = document.getElementById('server-command')?.textContent ?? '';
   return text.startsWith('accepted:')
@@ -85,12 +89,10 @@ function updateReadiness() {
     }
   }
 
-  verdict.textContent = headline;
-  detail.textContent = message;
+  setText(verdict, headline);
+  setText(detail, message);
   setReadinessClass(verdict, state);
 }
 
-const observer = new MutationObserver(updateReadiness);
-observer.observe(document.body, { childList: true, subtree: true, characterData: true });
 setInterval(updateReadiness, 250);
 updateReadiness();
