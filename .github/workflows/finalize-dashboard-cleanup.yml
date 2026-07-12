@@ -1,0 +1,99 @@
+name: Finalize dashboard cleanup
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.event.head_commit.message == 'Run dashboard cleanup finalizer'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cleanup/autonomy-dashboard
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply strict GPS coordinate freshness
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              file = Path(path)
+              text = file.read_text()
+              if old not in text:
+                  raise SystemExit(f'Expected text not found in {path}: {old!r}')
+              file.write_text(text.replace(old, new, 1))
+
+          replace_once('src/drone-adapters.ts', '''        telemetry.latitude += north * 0.1 / 111_132.92;
+        telemetry.gpsUpdatedAt = Date.now();
+        const longitudeScale = 111_412.84 * Math.cos(telemetry.latitude * Math.PI / 180);''', '''        telemetry.latitude += north * 0.1 / 111_132.92;
+        const longitudeScale = 111_412.84 * Math.cos(telemetry.latitude * Math.PI / 180);''')
+
+          replace_once('src/drone-adapters.ts', '''    telemetry.updatedAt = Date.now();
+    this.emitSnapshot();''', '''    if (telemetry.gpsFix === true
+      && typeof telemetry.latitude === 'number'
+      && typeof telemetry.longitude === 'number') {
+      telemetry.gpsUpdatedAt = Date.now();
+    }
+    telemetry.updatedAt = Date.now();
+    this.emitSnapshot();''')
+
+          replace_once('src/drone-adapters.ts', '''      if (latitude !== null && Math.abs(latitude) <= 90 && latitude !== 500) this.snapshot.telemetry.latitude = latitude;
+      if (longitude !== null && Math.abs(longitude) <= 180 && longitude !== 500) this.snapshot.telemetry.longitude = longitude;
+      if (altitude !== null && altitude !== 500) this.snapshot.telemetry.gpsAltitude = altitude;
+      if (typeof this.snapshot.telemetry.latitude === 'number' && typeof this.snapshot.telemetry.longitude === 'number') {
+        this.snapshot.telemetry.gpsUpdatedAt = Date.now();
+      }''', '''      const validLatitude = latitude !== null && Math.abs(latitude) <= 90 && latitude !== 500;
+      const validLongitude = longitude !== null && Math.abs(longitude) <= 180 && longitude !== 500;
+      if (validLatitude) this.snapshot.telemetry.latitude = latitude;
+      if (validLongitude) this.snapshot.telemetry.longitude = longitude;
+      if (altitude !== null && altitude !== 500) this.snapshot.telemetry.gpsAltitude = altitude;
+      if (validLatitude && validLongitude) this.snapshot.telemetry.gpsUpdatedAt = Date.now();''')
+
+          test = Path('src/drone-adapters.test.ts')
+          text = test.read_text()
+          marker = "  it('keeps numeric lowercase altitude compatibility', () => {"
+          addition = '''  it('only refreshes GPS time for a valid coordinate pair', () => {
+    const { drone, client } = telemetryHarness();
+    client.emit('PositionChanged', { latitude: 42.1, longitude: -71.2, altitude: 50 });
+    const validTimestamp = drone.getSnapshot().telemetry.gpsUpdatedAt;
+    expect(typeof validTimestamp).toBe('number');
+
+    client.emit('PositionChanged', { latitude: 500, longitude: 500, altitude: 500 });
+    expect(drone.getSnapshot().telemetry.gpsUpdatedAt).toBe(validTimestamp);
+  });
+
+'''
+          if addition not in text:
+              if marker not in text:
+                  raise SystemExit('Test insertion marker not found')
+              test.write_text(text.replace(marker, addition + marker, 1))
+          PY
+          rm -f .github/workflows/fix-gps-freshness.yml
+      - run: npm install
+      - run: npm run typecheck
+      - run: npm run check:client
+      - run: npm test
+      - run: npm run build
+      - run: node scripts/autonomy-smoke.mjs
+      - name: Commit verified branch changes
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "Validate fresh GPS coordinate packets"
+          git push origin HEAD:cleanup/autonomy-dashboard
+      - name: Remove finalizer from main
+        run: |
+          git checkout main
+          git pull --ff-only origin main
+          git rm .github/workflows/finalize-dashboard-cleanup.yml
+          git commit -m "Remove dashboard cleanup finalizer"
+          git push origin main
