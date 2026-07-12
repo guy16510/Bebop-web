@@ -12,8 +12,9 @@
     "build": "tsc",
     "start": "node dist/src/server.js",
     "typecheck": "tsc --noEmit",
-    "check:client": "node --check public/app.js && node --check public/readiness.js && node --check public/altitude.js",
+    "check:client": "node --check public/app.js && node --check public/readiness.js && node --check public/altitude.js && node --check public/perception.js",
     "test": "vitest run",
+    "perception:smoke": "npm run build && node scripts/perception-smoke.mjs && node scripts/perception-server-smoke.mjs",
     "video:inspect": "bash scripts/inspect-h264.sh"
   },
   "dependencies": {

@@ -5,6 +5,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { z } from 'zod';
 import pino from 'pino';
 import { createDroneAdapter } from './drone-adapters.js';
+import { PerceptionManager, type PerceptionBackend } from './perception.js';
 import { clampCommand, ZERO_COMMAND, type PilotingCommand } from './types.js';
 import { MjpegVideoManager } from './video.js';
 import { RawVideoManager, defaultCapturePath } from './raw-video.js';
@@ -15,6 +16,7 @@ const port = Number(process.env.PORT ?? 3000);
 const commandTimeoutMs = Number(process.env.COMMAND_TIMEOUT_MS ?? 250);
 const commandRateHz = Number(process.env.COMMAND_RATE_HZ ?? 20);
 const maxCommand = Number(process.env.MAX_COMMAND_PERCENT ?? 35);
+const droneMode = process.env.DRONE_MODE ?? 'simulated';
 
 const safety = new SafetyController({
   armWindowMs: Number(process.env.ARM_WINDOW_MS ?? DEFAULT_SAFETY_CONFIG.armWindowMs),
@@ -31,6 +33,16 @@ const safety = new SafetyController({
   ),
 });
 
+function resolvePerceptionBackend(): PerceptionBackend {
+  const fallback: PerceptionBackend = droneMode === 'bebop' ? 'disabled' : 'simulation';
+  const value = process.env.PERCEPTION_BACKEND ?? fallback;
+  if (value !== 'disabled' && value !== 'simulation' && value !== 'external') {
+    throw new Error('PERCEPTION_BACKEND must be disabled, simulation, or external');
+  }
+  return value;
+}
+
+const perceptionBackend = resolvePerceptionBackend();
 const adapter = createDroneAdapter(process.env.DRONE_MODE, log);
 const video = new MjpegVideoManager(adapter);
 const rawVideo = new RawVideoManager(adapter);
@@ -38,7 +50,7 @@ const app = express();
 
 app.use(express.json());
 app.use(express.static('public'));
-app.get('/api/health', (_req, res) => res.json({ ok: true, mode: process.env.DRONE_MODE ?? 'simulated' }));
+app.get('/api/health', (_req, res) => res.json({ ok: true, mode: droneMode, perceptionBackend }));
 app.get('/api/state', (_req, res) => res.json(adapter.getSnapshot()));
 app.get('/api/safety', (_req, res) => res.json(safety.getStatus(adapter.getSnapshot())));
 app.get('/api/video/health', (_req, res) => res.json(video.getHealth()));
@@ -86,6 +98,50 @@ let lastCommandAt = 0;
 let criticalLandingRequested = false;
 let shuttingDown = false;
 
+function broadcast(payload: unknown): void {
+  const data = JSON.stringify(payload);
+  for (const socket of wss.clients) {
+    if (socket.readyState === WebSocket.OPEN) socket.send(data);
+  }
+}
+
+const perception = new PerceptionManager({
+  backend: perceptionBackend,
+  command: process.env.PERCEPTION_COMMAND,
+  updateHz: Number(process.env.PERCEPTION_UPDATE_HZ ?? 10),
+  maxTrajectoryPoints: Number(process.env.PERCEPTION_MAX_TRAJECTORY_POINTS ?? 900),
+  maxLandmarks: Number(process.env.PERCEPTION_MAX_LANDMARKS ?? 2_500),
+  videoUrl: process.env.PERCEPTION_VIDEO_URL ?? `http://127.0.0.1:${port}/video.mjpeg`,
+  stateUrl: process.env.PERCEPTION_STATE_URL ?? `http://127.0.0.1:${port}/api/state`,
+  onUpdate: (snapshot, health) => broadcast({ type: 'perception.status', snapshot, health }),
+});
+
+function perceptionStatus(): { snapshot: ReturnType<PerceptionManager['getSnapshot']>; health: ReturnType<PerceptionManager['getHealth']> } {
+  return { snapshot: perception.getSnapshot(), health: perception.getHealth() };
+}
+
+async function runPerceptionAction(
+  action: 'start' | 'stop' | 'reset',
+): Promise<ReturnType<typeof perceptionStatus>> {
+  if (action === 'start') await perception.start();
+  else if (action === 'stop') await perception.stop();
+  else perception.reset();
+  return perceptionStatus();
+}
+
+const perceptionActionSchema = z.enum(['start', 'stop', 'reset']);
+app.get('/api/perception/status', (_req, res) => res.json(perceptionStatus()));
+app.post('/api/perception/:action', async (req, res) => {
+  try {
+    const action = perceptionActionSchema.parse(req.params.action);
+    res.json(await runPerceptionAction(action));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    log.error({ action: req.params.action, error: message }, 'Perception action failed');
+    res.status(500).json({ error: message, ...perceptionStatus() });
+  }
+});
+
 const sequenceSchema = z.number().int().nonnegative().optional();
 const messageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('diagnostic.ping'), id: z.number().int().nonnegative() }),
@@ -118,14 +174,10 @@ const messageSchema = z.discriminatedUnion('type', [
     inspectWithGstreamer: z.boolean().optional(),
   }),
   z.object({ type: z.literal('raw-video.stop') }),
+  z.object({ type: z.literal('perception.start') }),
+  z.object({ type: z.literal('perception.stop') }),
+  z.object({ type: z.literal('perception.reset') }),
 ]);
-
-function broadcast(payload: unknown): void {
-  const data = JSON.stringify(payload);
-  for (const socket of wss.clients) {
-    if (socket.readyState === WebSocket.OPEN) socket.send(data);
-  }
-}
 
 function broadcastSafety(): void {
   broadcast({ type: 'safety.status', status: safety.getStatus(adapter.getSnapshot()) });
@@ -169,6 +221,7 @@ function sendPilotAck(
 }
 
 adapter.onChange((snapshot) => {
+  perception.updateTelemetry(snapshot.telemetry);
   broadcast({ type: 'state', state: snapshot });
   broadcastSafety();
 });
@@ -178,6 +231,7 @@ wss.on('connection', (socket) => {
   socket.send(JSON.stringify({ type: 'safety.status', status: safety.getStatus(adapter.getSnapshot()) }));
   socket.send(JSON.stringify({ type: 'video.health', health: video.getHealth() }));
   socket.send(JSON.stringify({ type: 'raw-video.health', health: rawVideo.getHealth() }));
+  socket.send(JSON.stringify({ type: 'perception.status', ...perceptionStatus() }));
 
   socket.on('message', async (raw) => {
     try {
@@ -240,7 +294,7 @@ wss.on('connection', (socket) => {
         case 'drone.disconnect':
           safety.disarm();
           stopPiloting();
-          await Promise.allSettled([video.stop(), rawVideo.stop()]);
+          await Promise.allSettled([video.stop(), rawVideo.stop(), perception.stop()]);
           await adapter.disconnect();
           broadcastSafety();
           break;
@@ -286,6 +340,15 @@ wss.on('connection', (socket) => {
           break;
         case 'raw-video.stop':
           await rawVideo.stop();
+          break;
+        case 'perception.start':
+          await perception.start();
+          break;
+        case 'perception.stop':
+          await perception.stop();
+          break;
+        case 'perception.reset':
+          perception.reset();
           break;
       }
     } catch (error) {
@@ -342,7 +405,10 @@ setInterval(async () => {
 }, 1000);
 
 server.listen(port, () => {
-  log.info({ port, mode: process.env.DRONE_MODE ?? 'simulated' }, 'Bebop web server started');
+  log.info({ port, mode: droneMode, perceptionBackend }, 'Bebop web server started');
+  if (perceptionBackend === 'simulation' && process.env.PERCEPTION_AUTO_START !== 'false') {
+    void perception.start().catch((error) => log.error({ error }, 'Perception auto-start failed'));
+  }
 });
 
 async function shutdown(signal: NodeJS.Signals): Promise<void> {
@@ -351,7 +417,7 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
   log.info({ signal }, 'Shutting down Bebop web server');
   safety.disarm();
   stopPiloting();
-  await Promise.allSettled([video.stop(), rawVideo.stop()]);
+  await Promise.allSettled([video.stop(), rawVideo.stop(), perception.stop()]);
   await adapter.disconnect().catch(() => undefined);
   server.close(() => process.exit(0));
 }

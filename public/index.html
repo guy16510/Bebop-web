@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="/styles.css" />
   <link rel="stylesheet" href="/readiness.css" />
   <link rel="stylesheet" href="/altitude.css" />
+  <link rel="stylesheet" href="/perception.css" />
 </head>
 <body>
   <main>
@@ -20,6 +21,7 @@
 
     <section class="video">
       <img id="video-feed" alt="Bebop live camera" />
+      <canvas id="detection-overlay" aria-hidden="true"></canvas>
       <div id="video-placeholder" class="video-placeholder">
         <strong>Video stopped</strong>
         <span>Connect to the drone, then start video.</span>
@@ -81,6 +83,45 @@
           <div><dt>Height remaining</dt><dd id="altitude-remaining">--</dd></div>
         </dl>
         <ul id="safety-warnings"></ul>
+      </article>
+      <article class="perception-card">
+        <div class="perception-heading">
+          <div>
+            <h2>Perception and SLAM</h2>
+            <p>Object detections, recognized tracks, camera pose, trajectory, and a top-down landmark map. This output is read-only and never controls the drone.</p>
+          </div>
+          <span id="perception-state" class="status status-warning">stopped</span>
+        </div>
+        <div class="toolbar" aria-label="Perception actions">
+          <button type="button" class="primary" data-perception-action="start">Start perception</button>
+          <button type="button" data-perception-action="stop" disabled>Stop perception</button>
+          <button type="button" data-perception-action="reset">Reset map</button>
+        </div>
+        <p id="perception-error" class="perception-error" hidden></p>
+        <div class="perception-layout">
+          <div class="map-frame">
+            <canvas id="slam-map" aria-label="Top-down SLAM map"></canvas>
+          </div>
+          <div class="perception-side">
+            <dl>
+              <div><dt>Backend</dt><dd id="perception-backend">--</dd></div>
+              <div><dt>Tracking</dt><dd id="perception-tracking">--</dd></div>
+              <div><dt>Scale</dt><dd id="perception-scale">--</dd></div>
+              <div><dt>Rates</dt><dd id="perception-fps">--</dd></div>
+              <div><dt>Latency</dt><dd id="perception-latency">--</dd></div>
+              <div><dt>Tracked features</dt><dd id="perception-features">--</dd></div>
+              <div><dt>Map points</dt><dd id="perception-map-points">--</dd></div>
+              <div><dt>Objects</dt><dd id="perception-objects">--</dd></div>
+              <div><dt>Keyframes</dt><dd id="perception-keyframes">--</dd></div>
+            </dl>
+            <div>
+              <h3>Recognized objects</h3>
+              <p id="recognized-empty">No objects tracked.</p>
+              <ul id="recognized-objects"></ul>
+            </div>
+            <p class="perception-note">Simulation proves the process and rendering contract, not real camera calibration or in-flight tracking stability.</p>
+          </div>
+        </div>
       </article>
       <article class="controls-card">
         <h2>Control diagnostics</h2>
@@ -167,5 +208,6 @@
   <script type="module" src="/app.js"></script>
   <script type="module" src="/readiness.js"></script>
   <script type="module" src="/altitude.js"></script>
+  <script type="module" src="/perception.js"></script>
 </body>
 </html>
