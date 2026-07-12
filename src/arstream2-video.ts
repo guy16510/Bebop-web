@@ -125,7 +125,7 @@ export class JpegFrameSplitter extends Transform {
   private pending = Buffer.alloc(0);
 
   _transform(chunk: Buffer | Uint8Array, _encoding: BufferEncoding, callback: TransformCallback): void {
-    const input = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    const input = Buffer.from(chunk);
     this.pending = this.pending.length === 0 ? input : Buffer.concat([this.pending, input]);
 
     try {
