@@ -1,18 +1,11 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { ObjectDetection, NormalizedBoundingBox } from './perception.js';
+import type { NormalizedBoundingBox, ObjectDetection } from './perception.js';
 import type { DroneSnapshot, PilotingCommand } from './types.js';
 import { ZERO_COMMAND } from './types.js';
 
 export type SemanticBehavior = 'obstacle' | 'landmark' | 'landing-pad' | 'ignore';
-export type RangeSectorName =
-  | 'frontLeft'
-  | 'front'
-  | 'frontRight'
-  | 'left'
-  | 'right'
-  | 'rear'
-  | 'down';
+export type RangeSectorName = 'frontLeft' | 'front' | 'frontRight' | 'left' | 'right' | 'rear' | 'down';
 
 export interface SemanticObjectDefinition {
   id: string;
@@ -136,27 +129,28 @@ const DEFAULT_OBJECTS: SemanticObjectDefinition[] = [
   },
 ];
 
-function finiteNumber(value: unknown, fallback: number, minimum: number, maximum: number): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
-  return Math.max(minimum, Math.min(maximum, value));
+function bounded(value: unknown, fallback: number, minimum: number, maximum: number): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(minimum, Math.min(maximum, value))
+    : fallback;
 }
 
-function stringList(value: unknown): string[] {
+function cleanId(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback;
+  const id = value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+  return id || fallback;
+}
+
+function strings(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return [...new Set(value.filter((item): item is string => typeof item === 'string')
     .map((item) => item.trim().toLowerCase()).filter(Boolean))].slice(0, 32);
 }
 
-function numberList(value: unknown): number[] {
+function integers(value: unknown): number[] {
   if (!Array.isArray(value)) return [];
   return [...new Set(value.filter((item): item is number => Number.isInteger(item) && item >= 0 && item <= 4096))]
     .slice(0, 64);
-}
-
-function cleanId(value: unknown, fallback: string): string {
-  if (typeof value !== 'string') return fallback;
-  const normalized = value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
-  return normalized.slice(0, 64) || fallback;
 }
 
 export function normalizeNavigationSettings(
@@ -164,15 +158,7 @@ export function normalizeNavigationSettings(
   defaults: NavigationSettings = DEFAULT_NAVIGATION_SETTINGS,
 ): NavigationSettings {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-  const stopDistanceMeters = finiteNumber(source.stopDistanceMeters, defaults.stopDistanceMeters, 0.25, 10);
-  const cautionDistanceMeters = finiteNumber(
-    source.cautionDistanceMeters,
-    defaults.cautionDistanceMeters,
-    stopDistanceMeters + 0.1,
-    20,
-  );
-  const rollSign = source.landingRollSign === -1 ? -1 : source.landingRollSign === 1 ? 1 : defaults.landingRollSign;
-  const pitchSign = source.landingPitchSign === -1 ? -1 : source.landingPitchSign === 1 ? 1 : defaults.landingPitchSign;
+  const stopDistanceMeters = bounded(source.stopDistanceMeters, defaults.stopDistanceMeters, 0.25, 10);
   return {
     obstacleAvoidanceEnabled: typeof source.obstacleAvoidanceEnabled === 'boolean'
       ? source.obstacleAvoidanceEnabled
@@ -180,34 +166,24 @@ export function normalizeNavigationSettings(
     requireMetricRange: typeof source.requireMetricRange === 'boolean'
       ? source.requireMetricRange
       : defaults.requireMetricRange,
-    rangeTimeoutMs: finiteNumber(source.rangeTimeoutMs, defaults.rangeTimeoutMs, 100, 5_000),
+    rangeTimeoutMs: bounded(source.rangeTimeoutMs, defaults.rangeTimeoutMs, 100, 5_000),
     stopDistanceMeters,
-    cautionDistanceMeters,
-    avoidanceYawPercent: finiteNumber(source.avoidanceYawPercent, defaults.avoidanceYawPercent, 5, 20),
-    cruiseCommandPercent: finiteNumber(source.cruiseCommandPercent, defaults.cruiseCommandPercent, 5, 20),
-    landingCommandPercent: finiteNumber(source.landingCommandPercent, defaults.landingCommandPercent, 3, 15),
-    landingDescentPercent: finiteNumber(source.landingDescentPercent, defaults.landingDescentPercent, 3, 12),
-    landingAlignmentTolerance: finiteNumber(
+    cautionDistanceMeters: bounded(source.cautionDistanceMeters, defaults.cautionDistanceMeters, stopDistanceMeters + 0.1, 20),
+    avoidanceYawPercent: bounded(source.avoidanceYawPercent, defaults.avoidanceYawPercent, 5, 20),
+    cruiseCommandPercent: bounded(source.cruiseCommandPercent, defaults.cruiseCommandPercent, 5, 20),
+    landingCommandPercent: bounded(source.landingCommandPercent, defaults.landingCommandPercent, 3, 15),
+    landingDescentPercent: bounded(source.landingDescentPercent, defaults.landingDescentPercent, 3, 12),
+    landingAlignmentTolerance: bounded(
       source.landingAlignmentTolerance,
       defaults.landingAlignmentTolerance,
       0.02,
       0.25,
     ),
-    finalLandAltitudeMeters: finiteNumber(
-      source.finalLandAltitudeMeters,
-      defaults.finalLandAltitudeMeters,
-      0.2,
-      1.5,
-    ),
-    markerLossTimeoutMs: finiteNumber(source.markerLossTimeoutMs, defaults.markerLossTimeoutMs, 500, 10_000),
-    landingRollSign: rollSign,
-    landingPitchSign: pitchSign,
-    landingCameraTiltDegrees: finiteNumber(
-      source.landingCameraTiltDegrees,
-      defaults.landingCameraTiltDegrees,
-      -100,
-      100,
-    ),
+    finalLandAltitudeMeters: bounded(source.finalLandAltitudeMeters, defaults.finalLandAltitudeMeters, 0.2, 1.5),
+    markerLossTimeoutMs: bounded(source.markerLossTimeoutMs, defaults.markerLossTimeoutMs, 500, 10_000),
+    landingRollSign: source.landingRollSign === -1 ? -1 : source.landingRollSign === 1 ? 1 : defaults.landingRollSign,
+    landingPitchSign: source.landingPitchSign === -1 ? -1 : source.landingPitchSign === 1 ? 1 : defaults.landingPitchSign,
+    landingCameraTiltDegrees: bounded(source.landingCameraTiltDegrees, defaults.landingCameraTiltDegrees, -100, 100),
   };
 }
 
@@ -215,16 +191,16 @@ function normalizeObject(value: unknown, index: number): SemanticObjectDefinitio
   if (!value || typeof value !== 'object') return null;
   const source = value as Record<string, unknown>;
   const id = cleanId(source.id, `object-${index + 1}`);
-  const behavior: SemanticBehavior = ['obstacle', 'landmark', 'landing-pad', 'ignore'].includes(String(source.behavior))
+  const behavior = ['obstacle', 'landmark', 'landing-pad', 'ignore'].includes(String(source.behavior))
     ? source.behavior as SemanticBehavior
     : 'landmark';
   return {
     id,
     name: typeof source.name === 'string' && source.name.trim() ? source.name.trim().slice(0, 128) : id,
-    labels: stringList(source.labels),
-    markerIds: numberList(source.markerIds),
+    labels: strings(source.labels),
+    markerIds: integers(source.markerIds),
     behavior,
-    clearanceMeters: finiteNumber(source.clearanceMeters, behavior === 'obstacle' ? 1.5 : 0.3, 0, 20),
+    clearanceMeters: bounded(source.clearanceMeters, behavior === 'obstacle' ? 1.5 : 0.3, 0, 20),
     notes: typeof source.notes === 'string' ? source.notes.trim().slice(0, 500) : '',
   };
 }
@@ -232,16 +208,20 @@ function normalizeObject(value: unknown, index: number): SemanticObjectDefinitio
 function normalizePad(value: unknown, index: number): LandingPadDefinition | null {
   if (!value || typeof value !== 'object') return null;
   const source = value as Record<string, unknown>;
-  const id = cleanId(source.id, `pad-${index + 1}`);
   const markerId = Number(source.markerId);
   if (!Number.isInteger(markerId) || markerId < 0 || markerId > 4096) return null;
+  const id = cleanId(source.id, `pad-${index + 1}`);
   const map = source.mapPosition && typeof source.mapPosition === 'object'
     ? source.mapPosition as Record<string, unknown>
     : null;
-  const gps = source.gps && typeof source.gps === 'object' ? source.gps as Record<string, unknown> : null;
+  const gps = source.gps && typeof source.gps === 'object'
+    ? source.gps as Record<string, unknown>
+    : null;
   const mapPosition = map
-    && [map.x, map.y, map.z].every((item) => typeof item === 'number' && Number.isFinite(item))
-    ? { x: Number(map.x), y: Number(map.y), z: Number(map.z) }
+    && typeof map.x === 'number' && Number.isFinite(map.x)
+    && typeof map.y === 'number' && Number.isFinite(map.y)
+    && typeof map.z === 'number' && Number.isFinite(map.z)
+    ? { x: map.x, y: map.y, z: map.z }
     : undefined;
   const gpsPosition = gps
     && typeof gps.latitude === 'number' && Number.isFinite(gps.latitude)
@@ -256,11 +236,11 @@ function normalizePad(value: unknown, index: number): LandingPadDefinition | nul
     id,
     name: typeof source.name === 'string' && source.name.trim() ? source.name.trim().slice(0, 128) : id,
     markerId,
-    markerSizeMeters: finiteNumber(source.markerSizeMeters, 0.3, 0.05, 3),
+    markerSizeMeters: bounded(source.markerSizeMeters, 0.3, 0.05, 3),
     ...(mapPosition ? { mapPosition } : {}),
     ...(gpsPosition ? { gps: gpsPosition } : {}),
-    approachAltitudeMeters: finiteNumber(source.approachAltitudeMeters, 1.5, 0.5, 10),
-    arrivalRadiusMeters: finiteNumber(source.arrivalRadiusMeters, 1.5, 0.3, 10),
+    approachAltitudeMeters: bounded(source.approachAltitudeMeters, 1.5, 0.5, 10),
+    arrivalRadiusMeters: bounded(source.arrivalRadiusMeters, 1.5, 0.3, 10),
   };
 }
 
@@ -382,13 +362,17 @@ export function resolveSemanticObservations(
 }
 
 export function rangeFieldFresh(field: RangeField | null, settings: NavigationSettings, now = Date.now()): boolean {
-  return Boolean(field && now - field.receivedAt <= settings.rangeTimeoutMs && now - field.observedAt <= settings.rangeTimeoutMs * 2);
+  return Boolean(
+    field
+    && now - field.receivedAt <= settings.rangeTimeoutMs
+    && now - field.observedAt <= settings.rangeTimeoutMs * 2,
+  );
 }
 
 function sectorDistance(field: RangeField, names: RangeSectorName[]): number {
-  const values = names.map((name) => field.sectors[name]?.distanceMeters)
+  const distances = names.map((name) => field.sectors[name]?.distanceMeters)
     .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
-  return values.length > 0 ? Math.min(...values) : Number.POSITIVE_INFINITY;
+  return distances.length > 0 ? Math.min(...distances) : Number.POSITIVE_INFINITY;
 }
 
 export function applyObstacleAvoidance(
@@ -405,21 +389,25 @@ export function applyObstacleAvoidance(
       ? { command: ZERO_COMMAND, arrived: false, blocked: true, reason: 'Metric obstacle range is missing or stale' }
       : { command, arrived: false, blocked: false, reason: 'Metric range unavailable, avoidance not applied' };
   }
+
   const activeField = field as RangeField;
-  let names: RangeSectorName[] = [];
-  if (command.pitch > 0) names = ['frontLeft', 'front', 'frontRight'];
-  else if (command.pitch < 0) names = ['rear'];
-  else if (command.roll > 0) names = ['frontRight', 'right'];
-  else if (command.roll < 0) names = ['frontLeft', 'left'];
-  else return { command, arrived: false, blocked: false, reason: null };
+  const names: RangeSectorName[] = command.pitch > 0
+    ? ['frontLeft', 'front', 'frontRight']
+    : command.pitch < 0
+      ? ['rear']
+      : command.roll > 0
+        ? ['frontRight', 'right']
+        : command.roll < 0
+          ? ['frontLeft', 'left']
+          : [];
+  if (names.length === 0) return { command, arrived: false, blocked: false, reason: null };
 
   const distance = sectorDistance(activeField, names);
   if (distance <= settings.stopDistanceMeters) {
     if (command.pitch > 0) {
       const left = sectorDistance(activeField, ['frontLeft', 'left']);
       const right = sectorDistance(activeField, ['frontRight', 'right']);
-      const clearance = Math.max(left, right);
-      if (clearance > settings.cautionDistanceMeters) {
+      if (Math.max(left, right) > settings.cautionDistanceMeters) {
         return {
           command: {
             roll: 0,
@@ -443,10 +431,12 @@ export function applyObstacleAvoidance(
       distanceMeters: distance,
     };
   }
+
   if (distance < settings.cautionDistanceMeters) {
-    const ratio = Math.max(0.25, Math.min(1, (
-      distance - settings.stopDistanceMeters
-    ) / (settings.cautionDistanceMeters - settings.stopDistanceMeters)));
+    const ratio = Math.max(
+      0.25,
+      Math.min(1, (distance - settings.stopDistanceMeters) / (settings.cautionDistanceMeters - settings.stopDistanceMeters)),
+    );
     return {
       command: {
         roll: Math.round(command.roll * ratio),
@@ -478,12 +468,7 @@ export function gpsOffsetMeters(
   const latitudeRadians = ((from.latitude + to.latitude) / 2) * Math.PI / 180;
   const north = (to.latitude - from.latitude) * 111_132.92;
   const east = (to.longitude - from.longitude) * 111_412.84 * Math.cos(latitudeRadians);
-  return {
-    east,
-    north,
-    distance: Math.hypot(east, north),
-    bearing: Math.atan2(east, north),
-  };
+  return { east, north, distance: Math.hypot(east, north), bearing: Math.atan2(east, north) };
 }
 
 export function gpsGuidance(
@@ -492,14 +477,18 @@ export function gpsGuidance(
   settings: NavigationSettings,
 ): GuidanceResult {
   const telemetry = snapshot.telemetry;
-  if (!target.gps) return { command: ZERO_COMMAND, arrived: false, blocked: true, reason: 'Landing pad has no GPS position' };
+  if (!target.gps) {
+    return { command: ZERO_COMMAND, arrived: false, blocked: true, reason: 'Landing pad has no GPS position' };
+  }
   if (typeof telemetry.latitude !== 'number' || typeof telemetry.longitude !== 'number' || telemetry.gpsFix !== true) {
     return { command: ZERO_COMMAND, arrived: false, blocked: true, reason: 'A current GPS fix is required for pad transfer' };
   }
   if (typeof telemetry.yaw !== 'number' || !Number.isFinite(telemetry.yaw)) {
     return { command: ZERO_COMMAND, arrived: false, blocked: true, reason: 'Heading telemetry is required for GPS guidance' };
   }
-  const offset = gpsOffsetMeters(telemetry, target.gps);
+
+  const current = { latitude: telemetry.latitude, longitude: telemetry.longitude };
+  const offset = gpsOffsetMeters(current, target.gps);
   if (offset.distance <= target.arrivalRadiusMeters) {
     return {
       command: ZERO_COMMAND,
@@ -510,6 +499,7 @@ export function gpsGuidance(
       bearingRadians: offset.bearing,
     };
   }
+
   const yawError = wrapRadians(offset.bearing - telemetry.yaw);
   const strength = Math.max(5, Math.min(20, settings.cruiseCommandPercent));
   if (Math.abs(yawError) > 0.25) {
@@ -522,6 +512,7 @@ export function gpsGuidance(
       bearingRadians: offset.bearing,
     };
   }
+
   const speedScale = Math.max(0.35, Math.min(1, offset.distance / 5));
   return {
     command: { roll: 0, pitch: Math.round(strength * speedScale), yaw: 0, gaz: 0, active: true },
@@ -533,10 +524,7 @@ export function gpsGuidance(
   };
 }
 
-export function landingPadDetection(
-  detections: ObjectDetection[],
-  markerId: number,
-): ObjectDetection | null {
+export function landingPadDetection(detections: ObjectDetection[], markerId: number): ObjectDetection | null {
   return detections.find((item) => markerIdFromDetection(item) === markerId) ?? null;
 }
 
@@ -545,12 +533,11 @@ export function landingGuidance(
   altitudeMeters: number,
   settings: NavigationSettings,
 ): GuidanceResult {
-  const centerX = detection.bbox.x + detection.bbox.width / 2;
-  const centerY = detection.bbox.y + detection.bbox.height / 2;
-  const errorX = centerX - 0.5;
-  const errorY = centerY - 0.5;
+  const errorX = detection.bbox.x + detection.bbox.width / 2 - 0.5;
+  const errorY = detection.bbox.y + detection.bbox.height / 2 - 0.5;
   const aligned = Math.abs(errorX) <= settings.landingAlignmentTolerance
     && Math.abs(errorY) <= settings.landingAlignmentTolerance;
+
   if (aligned && altitudeMeters <= settings.finalLandAltitudeMeters) {
     return { command: ZERO_COMMAND, arrived: true, blocked: false, reason: 'Landing pad centered for final landing' };
   }
@@ -562,6 +549,7 @@ export function landingGuidance(
       reason: 'Landing pad centered, descending',
     };
   }
+
   const roll = Math.abs(errorX) > settings.landingAlignmentTolerance
     ? Math.sign(errorX) * settings.landingCommandPercent * settings.landingRollSign
     : 0;
