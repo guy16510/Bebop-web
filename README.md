@@ -1,6 +1,6 @@
 # Bebop Web
 
-A minimal local Node.js control console for the Parrot Bebop 2.
+A local Node.js control, video, perception, and mapping console for the Parrot Bebop 2.
 
 ## Current status
 
@@ -26,10 +26,17 @@ Implemented:
 - Descent-only recovery at the altitude ceiling
 - One-shot critical-battery landing request
 - Safety status API and browser diagnostics
-- GitHub Actions checks for typecheck, tests, and build
+- Deterministic object-detection and SLAM simulation
+- Supervised external perception sidecar protocol
+- Schema-validated poses, detections, tracks, landmarks, and metrics
+- Camera detection overlay and top-down map rendering
+- GitHub Actions checks for typecheck, tests, build, and perception smoke tests
 
 Still pending:
 
+- Physical Bebop camera calibration
+- A packaged ORB-SLAM3 and YOLOX sidecar image
+- Recorded-flight SLAM evaluation
 - WebRTC browser delivery
 - Hardware-tested telemetry event mapping
 - Hold-to-confirm emergency control
@@ -41,6 +48,7 @@ Still pending:
 - npm
 - For GStreamer diagnostics, `gst-launch-1.0`, `h264parse`, and `avdec_h264`
 - For real drone mode, a computer connected to the Bebop 2 Wi-Fi network
+- For real perception, an external sidecar implementing the documented newline-delimited JSON protocol
 
 ## Run
 
@@ -53,6 +61,37 @@ npm run dev
 Open `http://localhost:3000`.
 
 Simulation mode is the default. Set `DRONE_MODE=bebop` for the physical drone.
+
+The deterministic perception simulation starts automatically in simulated drone mode. Physical Bebop mode defaults perception to `disabled`, so fake map data can never be mistaken for real tracking.
+
+## Perception and SLAM
+
+The dashboard renders:
+
+- object detections and class recognition over the video feed
+- persistent recognized tracks
+- camera pose and heading
+- trajectory history
+- SLAM landmarks
+- world-positioned recognized objects
+- tracking, calibration, scale, latency, and frame-rate status
+
+The real adapter targets ORB-SLAM3 for monocular fisheye SLAM and YOLOX exported to ONNX for object detection. Both run outside the flight-control process. Perception is read-only and cannot issue piloting commands.
+
+The current Bebop adapter does not expose synchronized raw IMU samples or camera-to-IMU timing, so the real protocol requests monocular SLAM. It must not be described or configured as visual-inertial SLAM until that data and calibration path exists.
+
+Full architecture, protocol, configuration, tradeoffs, and real-hardware acceptance gates are in [`docs/perception.md`](docs/perception.md).
+
+Run the complete simulation checks:
+
+```bash
+npm run typecheck
+npm run check:client
+npm test
+npm run perception:smoke
+```
+
+`perception:smoke` builds the application, launches an external mock sidecar, validates its map and detection stream, then launches the compiled Bebop Web server and verifies the HTTP API, WebSocket lifecycle, reset, stop, restart, detections, landmarks, trajectory, and dashboard assets.
 
 ## Keyboard controls
 
@@ -116,7 +155,33 @@ The 120-meter application ceiling is intentionally below 400 feet. The dashboard
 10. Capture raw H.264 and validate it with GStreamer.
 11. Verify browser disconnect immediately stops movement and disarms.
 12. Verify the configured altitude ceiling blocks rise and lateral movement but still permits descent.
-13. Reinstall propellers only after all no-propeller tests pass.
+13. Configure the external perception sidecar and replay recorded video before live tracking.
+14. Confirm a sidecar crash does not affect STOP, Land, Emergency, or the command watchdog.
+15. Reinstall propellers only after all no-propeller tests pass.
+
+## Perception endpoints
+
+```text
+GET  /api/perception/status
+POST /api/perception/start
+POST /api/perception/stop
+POST /api/perception/reset
+```
+
+Configuration:
+
+```dotenv
+PERCEPTION_BACKEND=simulation
+PERCEPTION_AUTO_START=true
+PERCEPTION_COMMAND=
+PERCEPTION_UPDATE_HZ=10
+PERCEPTION_MAX_TRAJECTORY_POINTS=900
+PERCEPTION_MAX_LANDMARKS=2500
+PERCEPTION_VIDEO_URL=http://127.0.0.1:3000/video.mjpeg
+PERCEPTION_STATE_URL=http://127.0.0.1:3000/api/state
+```
+
+Use `PERCEPTION_BACKEND=external` and set `PERCEPTION_COMMAND` for the real sidecar. Use `disabled` to remove perception entirely.
 
 ## MJPEG endpoints
 
@@ -171,31 +236,35 @@ fdsrc -> bounded leaky queue -> h264parse -> avdec_h264 -> fakesink
 
 ```text
 Browser
-  | WebSocket controls, telemetry, safety status, and height display
-  | multipart MJPEG preview
+  | WebSocket controls, telemetry, safety, perception, and map state
+  | multipart MJPEG preview plus object overlay
 Node.js server
   | fixed-rate scheduler and command watchdog
   | flight safety controller
   | altitude-aware command filter
   | latest-frame-only MJPEG fanout
   | raw H.264 capture and process supervision
-DroneAdapter
-  | simulated or node-bebop
-Parrot Bebop 2
+  | perception schema validation and bounded fanout
+  | external sidecar lifecycle supervision
+DroneAdapter                       Perception sidecar
+  | simulated or node-bebop          | ORB-SLAM3 monocular fisheye SLAM
+Parrot Bebop 2                      | YOLOX ONNX object detection
 ```
 
 The intended final media path remains:
 
 ```text
-Bebop H.264 -> supervised GStreamer -> WebRTC -> Browser
+Bebop H.264 -> supervised media process -> WebRTC -> Browser
+                 |
+                 +-> ORB-SLAM3 + YOLOX sidecar -> validated map and detections
 ```
 
-Node.js supervises and signals the media process. It does not decode full frames on the flight-control event loop.
+Node.js supervises and signals media and perception processes. It does not decode full frames or run inference on the flight-control event loop.
 
 ## Next milestone
 
-1. Validate the altitude telemetry and descent-only ceiling against the physical Bebop 2.
-2. Validate telemetry and raw capture against the physical Bebop 2.
-3. Add hold-to-confirm emergency handling.
-4. Add a GStreamer WebRTC pipeline and signaling.
-5. Measure MJPEG versus WebRTC latency.
+1. Calibrate the exact stabilized Bebop camera stream and publish the calibration file.
+2. Package a pinned ORB-SLAM3 and YOLOX sidecar container.
+3. Replay recorded indoor and outdoor sequences and measure drift, relocalization, loop closure, detection accuracy, and latency.
+4. Validate perception process failure while measuring STOP and command scheduler latency.
+5. Add a GStreamer WebRTC pipeline and signaling.
