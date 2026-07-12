@@ -62,7 +62,8 @@ RUN git clone https://github.com/UZ-SLAMLab/ORB_SLAM3.git /opt/ORB_SLAM3 \
     && test -s /opt/ORB_SLAM3/lib/libORB_SLAM3.so
 
 COPY perception-sidecar /work/perception-sidecar
-RUN cmake -S /work/perception-sidecar -B /work/perception-sidecar/build \
+RUN sed -i 's/1.0F - x/1.0 - x/g; s/1.0F - y/1.0 - y/g' /work/perception-sidecar/src/main.cpp \
+    && cmake -S /work/perception-sidecar -B /work/perception-sidecar/build \
       -DCMAKE_BUILD_TYPE=Release \
       -DORB_SLAM3_ROOT=/opt/ORB_SLAM3 \
     && cmake --build /work/perception-sidecar/build --parallel 2 \
