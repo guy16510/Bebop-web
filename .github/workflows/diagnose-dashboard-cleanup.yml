@@ -1,0 +1,31 @@
+name: Diagnose autonomous dashboard cleanup
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    if: github.head_ref == 'cleanup/autonomy-dashboard' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cleanup/autonomy-dashboard
+          fetch-depth: 0
+      - name: Capture migration failure
+        run: |
+          set +e
+          python3 scripts/apply-dashboard-cleanup.py > /tmp/dashboard-cleanup-error.txt 2>&1
+          status=$?
+          git reset --hard HEAD
+          cp /tmp/dashboard-cleanup-error.txt dashboard-cleanup-error.txt
+          printf '\nexit_status=%s\n' "$status" >> dashboard-cleanup-error.txt
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add dashboard-cleanup-error.txt
+          git commit -m "Capture dashboard cleanup failure"
+          git push origin HEAD:cleanup/autonomy-dashboard
