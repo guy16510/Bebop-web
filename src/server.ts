@@ -129,10 +129,12 @@ async function runPerceptionAction(
   return perceptionStatus();
 }
 
+const perceptionActionSchema = z.enum(['start', 'stop', 'reset']);
 app.get('/api/perception/status', (_req, res) => res.json(perceptionStatus()));
-app.post('/api/perception/:action(start|stop|reset)', async (req, res) => {
+app.post('/api/perception/:action', async (req, res) => {
   try {
-    res.json(await runPerceptionAction(req.params.action as 'start' | 'stop' | 'reset'));
+    const action = perceptionActionSchema.parse(req.params.action);
+    res.json(await runPerceptionAction(action));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     log.error({ action: req.params.action, error: message }, 'Perception action failed');
