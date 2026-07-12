@@ -23,15 +23,19 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import textwrap
 
           workflow = Path('.github/workflows/apply-onboard-vision.yml').read_text()
           marker = "          python3 - <<'PY'\n"
           start = workflow.index(marker) + len(marker)
           end = workflow.index("\n          PY\n", start)
-          script = textwrap.dedent(workflow[start:end])
+          script = '\n'.join(
+              line[10:] if line.startswith('          ') else line
+              for line in workflow[start:end].splitlines()
+          )
           exec(compile(script, 'apply-onboard-vision.py', 'exec'))
           Path('.github/workflows/run-onboard-vision-pr.yml').unlink(missing_ok=True)
+          Path('.github/workflows/diagnose-onboard-vision.yml').unlink(missing_ok=True)
+          Path('.onboard-vision-error.txt').unlink(missing_ok=True)
           PY
       - run: npm install
       - run: npm run typecheck
