@@ -70,6 +70,32 @@
         <ul id="safety-warnings"></ul>
       </article>
       <article class="controls-card">
+        <h2>Control diagnostics</h2>
+        <p>This measures the browser to Node server path and confirms the exact command accepted by the adapter. The Bebop API does not provide an acknowledgement from each motor.</p>
+        <dl>
+          <div><dt>WebSocket RTT</dt><dd id="ws-rtt">--</dd></div>
+          <div><dt>WebSocket p95</dt><dd id="ws-p95">--</dd></div>
+          <div><dt>Last command RTT</dt><dd id="command-rtt">--</dd></div>
+          <div><dt>Last STOP RTT</dt><dd id="stop-rtt">--</dd></div>
+          <div><dt>Server apply time</dt><dd id="server-apply">--</dd></div>
+        </dl>
+        <div class="toolbar">
+          <button type="button" id="run-latency-test">Run 20-sample latency test</button>
+          <span id="latency-test-status" class="status">Not run</span>
+        </div>
+        <p>Last server-applied command:</p>
+        <pre id="server-command">No tracked command received</pre>
+        <h3>Props-off verification</h3>
+        <ol>
+          <li>Remove all propellers and place the drone on a stable surface.</li>
+          <li>Connect and acquire controls, then run the latency test.</li>
+          <li>Press and release every direction. Confirm the server-applied command changes to the expected single axis and returns to zero.</li>
+          <li>Hold a direction and press STOP. Confirm STOP RTT appears and the server-applied command immediately returns to all zeros.</li>
+          <li>With motors running and propellers still removed, hold a direction and close the browser tab. The server watchdog should stop movement within 250 ms.</li>
+          <li>Test Land and Emergency separately. Emergency must cut the motors immediately.</li>
+        </ol>
+      </article>
+      <article class="controls-card">
         <h2>Flight controls</h2>
         <p>Press and hold a direction. Keyboard: W/S pitch, A/D roll, Q/E yaw, R/F rise/fall.</p>
         <p><strong>STOP</strong> or Space immediately cancels movement. Land performs a controlled landing. Emergency cuts the motors.</p>
