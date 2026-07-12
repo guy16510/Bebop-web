@@ -1,4 +1,0 @@
-Expected text not found in src/navigation.test.ts: "  it('stops when metric range is stale', () => {"
-
-exit_status=1
-script_lines=208

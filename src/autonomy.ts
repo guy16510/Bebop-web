@@ -32,6 +32,7 @@ export interface AutonomySettings {
   minimumSignalRssi: number;
   targetAltitudeMeters: number;
   maximumAltitudeMeters: number;
+  maximumHorizontalDistanceMeters: number;
   maximumFlightSeconds: number;
   telemetryTimeoutMs: number;
   commandPercent: number;
@@ -80,6 +81,7 @@ export const DEFAULT_AUTONOMY_SETTINGS: AutonomySettings = {
   minimumSignalRssi: -75,
   targetAltitudeMeters: 1.2,
   maximumAltitudeMeters: 3,
+  maximumHorizontalDistanceMeters: 30,
   maximumFlightSeconds: 90,
   telemetryTimeoutMs: 1_500,
   commandPercent: 12,
@@ -144,6 +146,12 @@ export function normalizeAutonomySettings(
     minimumSignalRssi: finiteNumber(source.minimumSignalRssi, defaults.minimumSignalRssi, -95, -35),
     targetAltitudeMeters,
     maximumAltitudeMeters,
+    maximumHorizontalDistanceMeters: finiteNumber(
+      source.maximumHorizontalDistanceMeters,
+      defaults.maximumHorizontalDistanceMeters,
+      2,
+      100,
+    ),
     maximumFlightSeconds: finiteNumber(source.maximumFlightSeconds, defaults.maximumFlightSeconds, 20, 300),
     telemetryTimeoutMs: finiteNumber(source.telemetryTimeoutMs, defaults.telemetryTimeoutMs, 500, 5_000),
     commandPercent: finiteNumber(source.commandPercent, defaults.commandPercent, 5, 20),

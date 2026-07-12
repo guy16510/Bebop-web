@@ -44,6 +44,7 @@ function injectAutonomyDashboard() {
         <label>Landing pad<select id="autonomy-landing-pad"><option value="">Immediate landing</option></select></label>
         <label>Target altitude, m<input id="autonomy-target-altitude" type="number" min="0.5" max="10" step="0.1" /></label>
         <label>Autonomy ceiling, m<input id="autonomy-max-altitude" type="number" min="0.5" max="10" step="0.1" /></label>
+        <label>Horizontal geofence, m<input id="autonomy-max-distance" type="number" min="2" max="100" step="1" /></label>
         <label>Command strength, %<input id="autonomy-command" type="number" min="5" max="20" step="1" /></label>
         <label>Minimum takeoff battery, %<input id="autonomy-min-battery" type="number" min="20" max="100" step="1" /></label>
         <label>Landing reserve, %<input id="autonomy-reserve-battery" type="number" min="10" max="99" step="1" /></label>
@@ -107,6 +108,7 @@ function collectSettings() {
     minimumSignalRssi: settingValue('autonomy-min-signal'),
     targetAltitudeMeters: settingValue('autonomy-target-altitude'),
     maximumAltitudeMeters: settingValue('autonomy-max-altitude'),
+    maximumHorizontalDistanceMeters: settingValue('autonomy-max-distance'),
     maximumFlightSeconds: settingValue('autonomy-max-seconds'),
     telemetryTimeoutMs: settingValue('autonomy-telemetry-timeout'),
     commandPercent: settingValue('autonomy-command'),
@@ -150,6 +152,7 @@ function populateSettings(settings) {
   $('autonomy-min-signal').value = settings.minimumSignalRssi;
   $('autonomy-target-altitude').value = settings.targetAltitudeMeters;
   $('autonomy-max-altitude').value = settings.maximumAltitudeMeters;
+  $('autonomy-max-distance').value = settings.maximumHorizontalDistanceMeters;
   $('autonomy-max-seconds').value = settings.maximumFlightSeconds;
   $('autonomy-telemetry-timeout').value = settings.telemetryTimeoutMs;
   $('autonomy-command').value = settings.commandPercent;

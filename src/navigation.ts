@@ -364,6 +364,7 @@ export function resolveSemanticObservations(
 export function rangeFieldFresh(field: RangeField | null, settings: NavigationSettings, now = Date.now()): boolean {
   return Boolean(
     field
+    && field.observedAt <= now + 250
     && now - field.receivedAt <= settings.rangeTimeoutMs
     && now - field.observedAt <= settings.rangeTimeoutMs * 2,
   );
@@ -401,6 +402,19 @@ export function applyObstacleAvoidance(
           ? ['frontLeft', 'left']
           : [];
   if (names.length === 0) return { command, arrived: false, blocked: false, reason: null };
+
+  const available = names.some((name) => {
+    const value = activeField.sectors[name]?.distanceMeters;
+    return typeof value === 'number' && Number.isFinite(value);
+  });
+  if (!available && settings.requireMetricRange) {
+    return {
+      command: ZERO_COMMAND,
+      arrived: false,
+      blocked: true,
+      reason: `Metric range is missing for ${names.join(', ')}`,
+    };
+  }
 
   const distance = sectorDistance(activeField, names);
   if (distance <= settings.stopDistanceMeters) {
