@@ -1,0 +1,48 @@
+name: Run onboard vision implementation
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    if: github.head_ref == 'feature/onboard-vision-avoidance' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/onboard-vision-avoidance
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply embedded implementation
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import textwrap
+
+          workflow = Path('.github/workflows/apply-onboard-vision.yml').read_text()
+          marker = "          python3 - <<'PY'\n"
+          start = workflow.index(marker) + len(marker)
+          end = workflow.index("\n          PY\n", start)
+          script = textwrap.dedent(workflow[start:end])
+          exec(compile(script, 'apply-onboard-vision.py', 'exec'))
+          Path('.github/workflows/run-onboard-vision-pr.yml').unlink(missing_ok=True)
+          PY
+      - run: npm install
+      - run: npm run typecheck
+      - run: npm run check:client
+      - run: npm test
+      - run: npm run build
+      - run: node scripts/autonomy-smoke.mjs
+      - name: Commit verified onboard guard
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "Add constrained onboard vision avoidance"
+          git push origin HEAD:feature/onboard-vision-avoidance
