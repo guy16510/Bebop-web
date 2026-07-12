@@ -1,7 +1,3 @@
-Traceback (most recent call last):
-  File "<stdin>", line 9, in <module>
-  File "apply-onboard-vision.py", line 1
-    from pathlib import Path
-IndentationError: unexpected indent
+Expected text not found in public/navigation.js: "          obstacleAvoidanceEnabled: $('navigation-avoidance').checked,\nrequireMetricRange: $('navigation-require-range')"
 
 exit_status=1
