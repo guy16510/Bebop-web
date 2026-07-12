@@ -22,6 +22,7 @@ jobs:
       - run: npm run check:client
       - run: npm test
       - run: npm run build
+      - run: node scripts/autonomy-smoke.mjs
       - run: node scripts/perception-smoke.mjs
       - run: node scripts/perception-server-smoke.mjs
       - name: Validate calibration script syntax
