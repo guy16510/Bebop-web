@@ -144,7 +144,7 @@ export function normalizeAutonomySettings(
     minimumSignalRssi: finiteNumber(source.minimumSignalRssi, defaults.minimumSignalRssi, -95, -35),
     targetAltitudeMeters,
     maximumAltitudeMeters,
-    maximumFlightSeconds: finiteNumber(source.maximumFlightSeconds, defaults.maximumFlightSeconds, 20, 600),
+    maximumFlightSeconds: finiteNumber(source.maximumFlightSeconds, defaults.maximumFlightSeconds, 20, 300),
     telemetryTimeoutMs: finiteNumber(source.telemetryTimeoutMs, defaults.telemetryTimeoutMs, 500, 5_000),
     commandPercent: finiteNumber(source.commandPercent, defaults.commandPercent, 5, 20),
     pattern,
