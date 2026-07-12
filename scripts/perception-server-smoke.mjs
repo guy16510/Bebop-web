@@ -87,8 +87,24 @@ try {
   ));
 
   const dashboard = await fetch(`${baseUrl}/`).then((response) => response.text());
-  for (const marker of ['id="slam-map"', 'id="detection-overlay"', 'src="/perception.js"']) {
+  for (const marker of [
+    'id="slam-map"',
+    'id="map-fit"',
+    'id="map-follow"',
+    'id="map-export"',
+    'data-map-layer="landmarks"',
+    'id="detection-overlay"',
+    'src="/perception.js"',
+  ]) {
     if (!dashboard.includes(marker)) fail(`Dashboard is missing ${marker}`);
+  }
+  const perceptionClient = await fetch(`${baseUrl}/perception.js`).then((response) => response.text());
+  for (const marker of ['class InteractiveSlamMap', "addEventListener('wheel'", "addEventListener('pointerdown'", 'exportSnapshot()']) {
+    if (!perceptionClient.includes(marker)) fail(`Perception client is missing ${marker}`);
+  }
+  const perceptionCss = await fetch(`${baseUrl}/perception.css`).then((response) => response.text());
+  for (const marker of ['.slam-trajectory', '.slam-landmark', '#map-tooltip']) {
+    if (!perceptionCss.includes(marker)) fail(`Perception CSS is missing ${marker}`);
   }
 
   socket = await openSocket();
@@ -120,6 +136,7 @@ try {
     detections: restarted.snapshot.detections.length,
     landmarks: restarted.snapshot.map.landmarks.length,
     trajectoryPoints: restarted.snapshot.trajectory.length,
+    interactiveMap: true,
   }, null, 2));
 } finally {
   socket?.close();

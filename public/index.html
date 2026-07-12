@@ -88,7 +88,7 @@
         <div class="perception-heading">
           <div>
             <h2>Perception and SLAM</h2>
-            <p>Object detections, recognized tracks, camera pose, trajectory, and a top-down landmark map. This output is read-only and never controls the drone.</p>
+            <p>Object detections, recognized tracks, camera pose, trajectory, and an interactive top-down landmark map. This output is read-only and never controls the drone.</p>
           </div>
           <span id="perception-state" class="status status-warning">stopped</span>
         </div>
@@ -99,8 +99,26 @@
         </div>
         <p id="perception-error" class="perception-error" hidden></p>
         <div class="perception-layout">
-          <div class="map-frame">
-            <canvas id="slam-map" aria-label="Top-down SLAM map"></canvas>
+          <div class="map-column">
+            <div class="map-toolbar" aria-label="Map controls">
+              <button type="button" id="map-fit">Fit map</button>
+              <button type="button" id="map-follow" aria-pressed="true">Follow drone</button>
+              <button type="button" id="map-export">Export JSON</button>
+              <label><input type="checkbox" data-map-layer="landmarks" checked /> Landmarks</label>
+              <label><input type="checkbox" data-map-layer="trajectory" checked /> Path</label>
+              <label><input type="checkbox" data-map-layer="objects" checked /> Objects</label>
+              <span id="map-zoom">100%</span>
+            </div>
+            <div class="map-frame">
+              <svg id="slam-map" role="img" aria-label="Interactive top-down SLAM map"></svg>
+              <div id="map-tooltip" role="status" hidden></div>
+              <div class="map-legend" aria-hidden="true">
+                <span><i class="legend-landmark"></i>Landmark</span>
+                <span><i class="legend-path"></i>Trajectory</span>
+                <span><i class="legend-object"></i>Object</span>
+                <span><i class="legend-drone"></i>Drone</span>
+              </div>
+            </div>
           </div>
           <div class="perception-side">
             <dl>
@@ -119,7 +137,7 @@
               <p id="recognized-empty">No objects tracked.</p>
               <ul id="recognized-objects"></ul>
             </div>
-            <p class="perception-note">Simulation proves the process and rendering contract, not real camera calibration or in-flight tracking stability.</p>
+            <p class="perception-note">Real mode uses a separate ORB-SLAM3 and YOLOX process. Map output cannot issue flight commands.</p>
           </div>
         </div>
       </article>

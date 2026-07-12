@@ -1,88 +1,151 @@
 # Bebop Web
 
-A local Node.js control, video, perception, and mapping console for the Parrot Bebop 2.
+A local Node.js control, video, object-detection, and SLAM dashboard for the Parrot Bebop 2.
 
-## Current status
+## Implemented
 
-Implemented:
+- WebSocket flight controls with a 20 Hz scheduler and 250 ms stale-input watchdog
+- immediate STOP, Land, and Emergency paths independent of perception
+- telemetry, battery, signal, and height display
+- direct ARStream2 H.264 reception and low-latency MJPEG preview
+- automatic drone connection, decoded-video startup, and SLAM startup
+- native ORB-SLAM3 monocular sidecar
+- YOLOX-Tiny ONNX object detection through OpenCV DNN
+- persistent detection track IDs
+- pose, trajectory, accumulated landmarks, and loop-change output
+- interactive local SVG map with pan, zoom, fit, follow, layers, tooltips, and JSON export
+- measured Bebop 2 bootstrap camera calibration at 428x240
+- unit-specific camera calibration utility
+- deterministic simulation and production sidecar replay tests
 
-- TypeScript Node.js server
-- WebSocket flight-control API
-- Fixed-rate 20 Hz command scheduler
-- 250 ms stale-input watchdog
-- Single-browser pilot ownership
-- Keyboard controls
-- Telemetry display
-- Height display in feet and meters
-- Simulation mode for safe development
-- Initial `node-bebop` adapter
-- Direct MJPEG browser preview
-- Latest-frame-only fanout for slow browser clients
-- Raw H.264 capture from `getVideoStream()`
-- Optional supervised GStreamer decode diagnostics
-- Server-enforced arm window and takeoff gating
-- Telemetry freshness movement lockout
-- Battery and altitude safety policy
-- Descent-only recovery at the altitude ceiling
-- One-shot critical-battery landing request
-- Safety status API and browser diagnostics
-- Deterministic object-detection and SLAM simulation
-- Supervised external perception sidecar protocol
-- Schema-validated poses, detections, tracks, landmarks, and metrics
-- Camera detection overlay and top-down map rendering
-- GitHub Actions checks for typecheck, tests, build, and perception smoke tests
-
-Still pending:
-
-- Physical Bebop camera calibration
-- A packaged ORB-SLAM3 and YOLOX sidecar image
-- Recorded-flight SLAM evaluation
-- WebRTC browser delivery
-- Hardware-tested telemetry event mapping
-- Hold-to-confirm emergency control
-- Measured glass-to-glass latency
+Perception is read-only. It cannot issue takeoff, movement, STOP, Land, or Emergency commands.
 
 ## Requirements
 
 - Node.js 20 or newer
 - npm
-- For GStreamer diagnostics, `gst-launch-1.0`, `h264parse`, and `avdec_h264`
-- For real drone mode, a computer connected to the Bebop 2 Wi-Fi network
-- For real perception, an external sidecar implementing the documented newline-delimited JSON protocol
+- Docker Desktop for the real ORB-SLAM3 and YOLOX sidecar
+- FFmpeg
+- a computer connected to the Bebop 2 Wi-Fi network for physical-drone mode
+- Python 3 only when creating a unit-specific camera calibration
 
-## Run
+## Connect to Wi-Fi and map automatically
+
+Build the sidecar once:
 
 ```bash
-cp .env.example .env
 npm install
+npm run perception:sidecar:build
+npm run perception:sidecar:verify
+```
+
+Create the physical-drone configuration once:
+
+```bash
+cp .env.bebop.example .env
+```
+
+For each mapping session:
+
+1. Power on the Bebop 2.
+2. Connect the Mac to the Bebop Wi-Fi network.
+3. Keep the propellers removed for the first physical validation.
+4. Start Bebop Web:
+
+```bash
 npm run dev
 ```
 
-Open `http://localhost:3000`.
+5. Open `http://localhost:3000`.
 
-Simulation mode is the default. Set `DRONE_MODE=bebop` for the physical drone.
+The launcher automatically performs this sequence:
 
-The deterministic perception simulation starts automatically in simulated drone mode. Physical Bebop mode defaults perception to `disabled`, so fake map data can never be mistaken for real tracking.
+```text
+connect to Bebop
+  -> start ARStream2 reception
+  -> wait for the first decoded JPEG frame
+  -> start the ORB-SLAM3 and YOLOX container
+  -> wait for ORB-SLAM3 tracking
+  -> stream the map and detections to the dashboard
+```
 
-## Perception and SLAM
+If decoded video stalls, the perception process faults, or ORB-SLAM3 cannot establish tracking within the configured timeout, the supervisor stops video and perception and retries. Flight controls remain isolated from this recovery loop.
 
-The dashboard renders:
+The dashboard should progress through `initializing` to `tracking`. Move the drone by hand with the propellers removed and confirm that the path and landmarks change before attempting any propeller-on test.
 
-- object detections and class recognition over the video feed
-- persistent recognized tracks
-- camera pose and heading
-- trajectory history
-- SLAM landmarks
-- world-positioned recognized objects
-- tracking, calibration, scale, latency, and frame-rate status
+## Bootstrap calibration
 
-The real adapter targets ORB-SLAM3 for monocular fisheye SLAM and YOLOX exported to ONNX for object detection. Both run outside the flight-control process. Perception is read-only and cannot issue piloting commands.
+`.env.bebop.example` uses:
 
-The current Bebop adapter does not expose synchronized raw IMU samples or camera-to-IMU timing, so the real protocol requests monocular SLAM. It must not be described or configured as visual-inertial SLAM until that data and calibration path exists.
+```text
+config/perception/bebop2-upstream-428x240.yaml
+```
 
-Full architecture, protocol, configuration, tradeoffs, and real-hardware acceptance gates are in [`docs/perception.md`](docs/perception.md).
+This file is derived from the published 856x480 Bebop 2 camera calibration and scaled exactly by 0.5. The decoder is therefore fixed to 428x240 so the image geometry and intrinsics remain aligned.
 
-Run the complete simulation checks:
+This allows mapping to start immediately without a checkerboard session. It is a camera-family calibration, not a measurement of this specific drone. A unit-specific calibration can reduce reprojection error and drift.
+
+## Unit-specific calibration
+
+Start Bebop Web with video running, then use a printed chessboard with nine by six inner corners:
+
+```bash
+python3 -m venv .venv-calibration
+source .venv-calibration/bin/activate
+pip install -r perception-sidecar/requirements-calibration.txt
+python3 scripts/calibrate-bebop-camera.py \
+  --source http://127.0.0.1:3000/video.mjpeg \
+  --board-cols 9 \
+  --board-rows 6 \
+  --square-size 0.024 \
+  --output config/perception/bebop2.yaml
+```
+
+Then change `.env`:
+
+```dotenv
+PERCEPTION_CALIBRATION_FILE=config/perception/bebop2.yaml
+```
+
+Recalibrate whenever the stream resolution, stabilization, resize, or crop changes.
+
+## Map scale
+
+The Bebop path currently uses monocular ORB-SLAM3 without synchronized raw IMU samples. Monocular translation scale is arbitrary, so the dashboard labels horizontal coordinates as relative units (`u`), not meters. Altitude telemetry remains displayed separately in real units.
+
+A future synchronized visual-inertial or externally scale-anchored path can report metric map coordinates.
+
+## Interactive map
+
+The dashboard renderer is local and has no runtime CDN dependency. It supports:
+
+- drag to pan
+- wheel or trackpad zoom around the pointer
+- double-click or **Fit map** to reset
+- **Follow drone** centering
+- landmark, path, and mapped-object layers
+- landmark and object tooltips
+- JSON export
+
+Object boxes are drawn over the camera preview. Monocular detections do not have reliable depth, so objects appear on the top-down map only when a world position is available. Approximate placement is opt-in with `OBJECT_POSITION_ESTIMATE=true`.
+
+## Verify the complete perception stack
+
+```bash
+npm run perception:sidecar:verify
+```
+
+This command requires the Docker image and verifies:
+
+- the native binaries load and link
+- the ORB vocabulary and settings load
+- deterministic 3D frames make ORB-SLAM3 reach tracking
+- ORB-SLAM3 creates map points and tracks features
+- YOLOX loads and completes CPU inference with finite output
+- a synthetic AVI is processed through the production sidecar VideoCapture path
+- production NDJSON snapshots contain tracked poses, trajectory growth, landmarks, and inference metrics
+
+Run the Node and dashboard checks:
 
 ```bash
 npm run typecheck
@@ -91,7 +154,30 @@ npm test
 npm run perception:smoke
 ```
 
-`perception:smoke` builds the application, launches an external mock sidecar, validates its map and detection stream, then launches the compiled Bebop Web server and verifies the HTTP API, WebSocket lifecycle, reset, stop, restart, detections, landmarks, trajectory, and dashboard assets.
+## Safe simulation
+
+```bash
+cp .env.example .env
+npm install
+npm run dev
+```
+
+Open `http://localhost:3000`. Simulation mode starts deterministic perception automatically and exercises the same dashboard schema and renderer.
+
+## Automatic mapping settings
+
+The physical profile includes:
+
+```dotenv
+AUTO_START_MAPPING=true
+AUTO_START_RETRY_MS=2000
+AUTO_START_FRAME_TIMEOUT_MS=15000
+AUTO_START_STALE_FRAME_MS=5000
+AUTO_START_TRACKING_TIMEOUT_MS=30000
+AUTO_START_POLL_MS=500
+```
+
+Set `AUTO_START_MAPPING=false` to return to manual Connect, Start video, and Start perception controls.
 
 ## Keyboard controls
 
@@ -106,130 +192,32 @@ npm run perception:smoke
 
 The browser sends desired state at 20 Hz. The server owns the actual command frequency and resets movement after 250 ms without input.
 
-## Enforced safety behavior
+## Enforced flight safety
 
-Takeoff is rejected unless all of these are true:
+Takeoff is rejected unless:
 
-- The drone is connected.
-- Telemetry is fresh.
-- The drone reports `landed`.
-- Battery is above the configured minimum.
-- The operator clicked **Arm** within the active arm window.
+- the drone is connected
+- telemetry is fresh
+- the drone reports `landed`
+- battery is above the configured minimum
+- the operator clicked **Arm** within the active arm window
 
-The arm state expires automatically and is consumed by a successful takeoff request. It is also cleared on disconnect, landing, emergency, pilot disconnect, and server shutdown.
+The arm state expires and is cleared on disconnect, landing, emergency, pilot disconnect, and server shutdown. At the configured altitude ceiling, climb and lateral movement are rejected while pure descent remains available. Critical battery requests a landing and clears movement.
 
-Active movement commands are replaced with a zero command when telemetry becomes stale. At the configured altitude ceiling, climb, yaw, pitch, and roll are rejected while a pure descent remains available. At critical battery while airborne, the server sends one landing request and stops movement.
-
-Safety status is available at:
+## APIs
 
 ```text
-GET /api/safety
-```
-
-Configuration:
-
-```dotenv
-ARM_WINDOW_MS=10000
-TELEMETRY_WARNING_MS=1000
-TELEMETRY_LOCKOUT_MS=3000
-MINIMUM_TAKEOFF_BATTERY_PERCENT=20
-CRITICAL_BATTERY_PERCENT=10
-MAXIMUM_ALTITUDE_METERS=120
-```
-
-`MAXIMUM_ALTITUDE_METERS` may be set lower than 120, but the application refuses to start if it is configured above 120 meters, approximately 394 feet. The dashboard-reported height is relative to the takeoff point and is not terrain-following above-ground-level data.
-
-The 120-meter application ceiling is intentionally below 400 feet. The dashboard cannot verify terrain changes, controlled airspace authorization, proximity to structures, temporary flight restrictions, or other operating conditions. These safeguards do not replace the drone firmware, the original controller, airspace checks, or normal flight precautions.
-
-## Real Bebop validation
-
-1. Remove the propellers.
-2. Connect the host to the Bebop Wi-Fi network.
-3. Start the server with `DRONE_MODE=bebop npm run dev`.
-4. Click **Connect** and confirm telemetry.
-5. Click **Acquire controls**.
-6. Click **Arm** and confirm the countdown appears.
-7. Confirm **Take off** becomes enabled only while the safety checks pass.
-8. Let the arm window expire and verify takeoff becomes disabled.
-9. Start MJPEG preview and inspect `/api/video/health`.
-10. Capture raw H.264 and validate it with GStreamer.
-11. Verify browser disconnect immediately stops movement and disarms.
-12. Verify the configured altitude ceiling blocks rise and lateral movement but still permits descent.
-13. Configure the external perception sidecar and replay recorded video before live tracking.
-14. Confirm a sidecar crash does not affect STOP, Land, Emergency, or the command watchdog.
-15. Reinstall propellers only after all no-propeller tests pass.
-
-## Perception endpoints
-
-```text
+GET  /api/health
+GET  /api/state
+GET  /api/safety
+GET  /api/video/health
+POST /api/video/start
+POST /api/video/stop
+GET  /video.mjpeg
 GET  /api/perception/status
 POST /api/perception/start
 POST /api/perception/stop
 POST /api/perception/reset
-```
-
-Configuration:
-
-```dotenv
-PERCEPTION_BACKEND=simulation
-PERCEPTION_AUTO_START=true
-PERCEPTION_COMMAND=
-PERCEPTION_UPDATE_HZ=10
-PERCEPTION_MAX_TRAJECTORY_POINTS=900
-PERCEPTION_MAX_LANDMARKS=2500
-PERCEPTION_VIDEO_URL=http://127.0.0.1:3000/video.mjpeg
-PERCEPTION_STATE_URL=http://127.0.0.1:3000/api/state
-```
-
-Use `PERCEPTION_BACKEND=external` and set `PERCEPTION_COMMAND` for the real sidecar. Use `disabled` to remove perception entirely.
-
-## MJPEG endpoints
-
-```text
-POST /api/video/start
-POST /api/video/stop
-GET  /api/video/health
-GET  /video.mjpeg
-```
-
-MJPEG is the compatibility preview. Each browser has an effective one-frame buffer, so slow viewers drop old frames rather than accumulating latency.
-
-The preview defaults to `480x276` with FFmpeg MJPEG quality `5` to keep encoding latency low. Override these with `VIDEO_MJPEG_WIDTH`, `VIDEO_MJPEG_HEIGHT`, and `VIDEO_MJPEG_QUALITY` (1 is highest quality, 31 is fastest/lowest quality).
-
-## Raw H.264 capture
-
-Start capture and optionally pipe the same stream through GStreamer:
-
-```bash
-curl -X POST http://localhost:3000/api/raw-video/start \
-  -H 'content-type: application/json' \
-  -d '{"capture":true,"inspectWithGstreamer":true}'
-```
-
-Check health:
-
-```bash
-curl http://localhost:3000/api/raw-video/health
-```
-
-Stop capture:
-
-```bash
-curl -X POST http://localhost:3000/api/raw-video/stop
-```
-
-Captures are written to `captures/` by default and intentionally ignored by Git. Override the path with `VIDEO_CAPTURE_PATH` or the directory with `VIDEO_CAPTURE_DIR`.
-
-Replay and inspect a saved capture:
-
-```bash
-npm run video:inspect -- captures/bebop-<timestamp>.h264
-```
-
-The diagnostic GStreamer pipeline is:
-
-```text
-fdsrc -> bounded leaky queue -> h264parse -> avdec_h264 -> fakesink
 ```
 
 ## Architecture
@@ -238,33 +226,21 @@ fdsrc -> bounded leaky queue -> h264parse -> avdec_h264 -> fakesink
 Browser
   | WebSocket controls, telemetry, safety, perception, and map state
   | multipart MJPEG preview plus object overlay
-Node.js server
-  | fixed-rate scheduler and command watchdog
+Node launcher
+  | automatic connect/video/SLAM supervisor
+Node server
+  | command scheduler and watchdog
   | flight safety controller
-  | altitude-aware command filter
   | latest-frame-only MJPEG fanout
-  | raw H.264 capture and process supervision
   | perception schema validation and bounded fanout
-  | external sidecar lifecycle supervision
-DroneAdapter                       Perception sidecar
-  | simulated or node-bebop          | ORB-SLAM3 monocular fisheye SLAM
-Parrot Bebop 2                      | YOLOX ONNX object detection
+DroneAdapter                       Perception sidecar container
+  | node-bebop command channel       | ORB-SLAM3 monocular SLAM
+  | ARStream2 H.264 receiver         | YOLOX-Tiny ONNX via OpenCV DNN
+Parrot Bebop 2                      | pose, landmarks, trajectory, objects
 ```
 
-The intended final media path remains:
+Full perception design and protocol details are in [`docs/perception.md`](docs/perception.md).
 
-```text
-Bebop H.264 -> supervised media process -> WebRTC -> Browser
-                 |
-                 +-> ORB-SLAM3 + YOLOX sidecar -> validated map and detections
-```
+## Physical acceptance gate
 
-Node.js supervises and signals media and perception processes. It does not decode full frames or run inference on the flight-control event loop.
-
-## Next milestone
-
-1. Calibrate the exact stabilized Bebop camera stream and publish the calibration file.
-2. Package a pinned ORB-SLAM3 and YOLOX sidecar container.
-3. Replay recorded indoor and outdoor sequences and measure drift, relocalization, loop closure, detection accuracy, and latency.
-4. Validate perception process failure while measuring STOP and command scheduler latency.
-5. Add a GStreamer WebRTC pipeline and signaling.
+The automated and replay tests provide high confidence in the software path, but they cannot prove this individual drone's radio environment, exact optical calibration, or physical flight behavior. Keep the propellers removed while confirming real video, tracking, map direction, object overlay alignment, STOP latency under CPU load, and sidecar crash isolation. Only then perform a low-altitude open-area hover test. Do not use perception output for autonomous flight control.

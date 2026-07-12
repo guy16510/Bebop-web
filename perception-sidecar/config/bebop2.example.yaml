@@ -1,0 +1,40 @@
+%YAML:1.0
+
+# EXAMPLE ONLY. These values are intentionally approximate and are not a measured Bebop 2 calibration.
+# Generate /config/bebop2.yaml with scripts/calibrate-bebop-camera.py using the exact stream,
+# resolution, stabilization, and crop used by PERCEPTION_VIDEO_URL.
+
+File.version: "1.0"
+Camera.type: "KannalaBrandt8"
+
+# Approximate 480x276 starting values. Replace every value below with calibration output.
+Camera1.fx: 240.0
+Camera1.fy: 240.0
+Camera1.cx: 240.0
+Camera1.cy: 138.0
+Camera1.k1: 0.0
+Camera1.k2: 0.0
+Camera1.k3: 0.0
+Camera1.k4: 0.0
+
+Camera.width: 480
+Camera.height: 276
+Camera.fps: 30
+Camera.RGB: 0
+
+ORBextractor.nFeatures: 1600
+ORBextractor.scaleFactor: 1.2
+ORBextractor.nLevels: 8
+ORBextractor.iniThFAST: 15
+ORBextractor.minThFAST: 5
+
+Viewer.KeyFrameSize: 0.05
+Viewer.KeyFrameLineWidth: 1.0
+Viewer.GraphLineWidth: 0.9
+Viewer.PointSize: 2.0
+Viewer.CameraSize: 0.08
+Viewer.CameraLineWidth: 3.0
+Viewer.ViewpointX: 0.0
+Viewer.ViewpointY: -0.7
+Viewer.ViewpointZ: -3.5
+Viewer.ViewpointF: 500.0

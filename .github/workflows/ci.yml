@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -20,3 +24,100 @@ jobs:
       - run: npm run build
       - run: node scripts/perception-smoke.mjs
       - run: node scripts/perception-server-smoke.mjs
+      - name: Validate calibration script syntax
+        run: python3 -m py_compile scripts/calibrate-bebop-camera.py
+
+  perception-sidecar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build pinned ORB-SLAM3 and YOLOX sidecar
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: perception-sidecar/Dockerfile
+          load: true
+          tags: bebop-perception-sidecar:ci
+          cache-from: type=gha,scope=bebop-perception-sidecar
+          cache-to: type=gha,mode=max,scope=bebop-perception-sidecar
+      - name: Execute engines and production Bebop replay path
+        run: |
+          mkdir -p /tmp/perception-replay
+          docker run --rm bebop-perception-sidecar:ci --self-test > /tmp/sidecar-self-test.json
+          docker run --rm \
+            --entrypoint /usr/local/bin/bebop-perception-engine-self-test \
+            -e ORB_SETTINGS=/config/bebop2-upstream-428x240.yaml \
+            -e SYNTHETIC_VIDEO_OUT=/replay/synthetic.avi \
+            -v /tmp/perception-replay:/replay \
+            bebop-perception-sidecar:ci > /tmp/engine-self-test.json
+          cat > /tmp/perception-replay/start.ndjson <<'EOF'
+          {"type":"start","protocolVersion":1,"videoUrl":"/replay/synthetic.avi","stateUrl":"","slam":{"library":"ORB-SLAM3","sensorMode":"monocular","cameraModel":"pinhole","requireCalibration":true},"detector":{"runtime":"OpenCV DNN","modelFamily":"YOLOX"}}
+          EOF
+          docker run --rm -i \
+            --entrypoint /usr/local/bin/bebop-perception-sidecar \
+            -e ORB_SETTINGS=/config/bebop2-upstream-428x240.yaml \
+            -e PERCEPTION_CAMERA_CALIBRATED=true \
+            -e PERCEPTION_OUTPUT_HZ=30 \
+            -e DETECTION_EVERY_N_FRAMES=10 \
+            -v /tmp/perception-replay:/replay:ro \
+            bebop-perception-sidecar:ci \
+            < /tmp/perception-replay/start.ndjson \
+            > /tmp/production-replay.ndjson
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          protocol = json.loads(Path('/tmp/sidecar-self-test.json').read_text())
+          assert protocol['type'] == 'perception.snapshot'
+          snapshot = protocol['snapshot']
+          assert snapshot['backend'] == 'external'
+          assert snapshot['source'] == 'orb-slam3-yolox-self-test'
+          assert snapshot['trackingState'] == 'tracking'
+          assert snapshot['calibrated'] is True
+          assert snapshot['map']['bounds']['minX'] < snapshot['map']['bounds']['maxX']
+
+          engines = json.loads(Path('/tmp/engine-self-test.json').read_text())
+          assert engines['ok'] is True
+          assert engines['camera']['model'] == 'PinHole'
+          assert engines['camera']['width'] == 428
+          assert engines['camera']['height'] == 240
+          assert engines['orbSlam3']['vocabularyLoaded'] is True
+          assert engines['orbSlam3']['systemConstructed'] is True
+          assert engines['orbSlam3']['framesSubmitted'] == 120
+          assert engines['orbSlam3']['trackingReached'] is True
+          assert engines['orbSlam3']['maxTrackedPoints'] > 0
+          assert engines['orbSlam3']['maxTrackedFeatures'] >= 40
+          assert engines['orbSlam3']['syntheticVideoWritten'] is True
+          assert Path('/tmp/perception-replay/synthetic.avi').stat().st_size > 0
+          assert engines['yolox']['modelLoaded'] is True
+          assert engines['yolox']['inferenceExecuted'] is True
+          assert engines['yolox']['outputElements'] > 0
+
+          replay = [
+              json.loads(line)['snapshot']
+              for line in Path('/tmp/production-replay.ndjson').read_text().splitlines()
+              if line.strip()
+          ]
+          assert len(replay) >= 3
+          assert all(item['backend'] == 'external' for item in replay)
+          assert all(item['calibrated'] is True for item in replay)
+          assert any(item['trackingState'] == 'tracking' for item in replay)
+          assert max(len(item['trajectory']) for item in replay) >= 5
+          assert max(len(item['map']['landmarks']) for item in replay) > 0
+          assert max(item['metrics']['trackedFeatures'] for item in replay) >= 40
+          assert any(item['metrics']['inferenceMs'] > 0 for item in replay)
+          assert any('yolox' in item['source'] for item in replay)
+
+          print(json.dumps({
+              'ok': True,
+              'camera': engines['camera'],
+              'framesSubmitted': engines['orbSlam3']['framesSubmitted'],
+              'maxTrackedPoints': max(len(item['map']['landmarks']) for item in replay),
+              'maxTrajectory': max(len(item['trajectory']) for item in replay),
+              'maxTrackedFeatures': max(item['metrics']['trackedFeatures'] for item in replay),
+              'yoloxOutputElements': engines['yolox']['outputElements'],
+              'productionSnapshots': len(replay),
+          }))
+          PY
