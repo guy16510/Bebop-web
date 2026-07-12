@@ -64,17 +64,20 @@ const autoMappingDefault = envBoolean(
   'AUTO_START_MAPPING',
   droneMode === 'bebop' && perceptionBackend === 'external',
 );
+const simulationPerceptionDefault = perceptionBackend === 'simulation'
+  && envBoolean('PERCEPTION_AUTO_START', true);
 
 let featureSettings: RuntimeFeatureSettings = {
   autoConnect: envBoolean('FEATURE_AUTO_CONNECT', autoMappingDefault),
   video: envBoolean('FEATURE_VIDEO_ENABLED', autoMappingDefault),
-  perception: envBoolean('FEATURE_PERCEPTION_ENABLED', autoMappingDefault),
+  perception: envBoolean('FEATURE_PERCEPTION_ENABLED', simulationPerceptionDefault || autoMappingDefault),
   showDetections: envBoolean('FEATURE_SHOW_DETECTIONS', true),
   showMap: envBoolean('FEATURE_SHOW_MAP', true),
 };
 
 let socket: WebSocket | undefined;
 let socketPromise: Promise<WebSocket> | undefined;
+let lastSocketError: string | null = null;
 let lastCommandError: string | null = null;
 let droneConnectionState = 'disconnected';
 let coordinator: MappingAutostartCoordinator | undefined;
@@ -113,6 +116,7 @@ function connectSocket(): Promise<WebSocket> {
       clearTimeout(timeout);
       socket = candidate;
       socketPromise = undefined;
+      lastSocketError = null;
       resolve(candidate);
     });
     candidate.once('error', (error) => {
@@ -140,6 +144,18 @@ function connectSocket(): Promise<WebSocket> {
   });
 
   return socketPromise;
+}
+
+async function maintainSupervisorConnection(): Promise<void> {
+  try {
+    await connectSocket();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message !== lastSocketError) {
+      lastSocketError = message;
+      console.error(JSON.stringify({ component: 'mapping-autostart', stage: 'waiting-for-server', error: message }));
+    }
+  }
 }
 
 async function sendMessage(message: unknown): Promise<void> {
@@ -221,4 +237,8 @@ console.log(JSON.stringify({
   desired: desiredFrom(featureSettings),
   goal: 'apply dashboard feature settings to connection, video, ORB-SLAM3, and recognition startup',
 }));
+
+void maintainSupervisorConnection();
+const connectionTimer = setInterval(() => void maintainSupervisorConnection(), 2_000);
+connectionTimer.unref();
 coordinator.start();
