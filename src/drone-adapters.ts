@@ -5,6 +5,7 @@ import {
   installArStream2Discovery,
   type ArStream2DiscoveryResponse,
 } from './arstream2-video.js';
+import { applyBebopPilotingCommand } from './bebop-piloting.js';
 import type {
   ConnectionState,
   DroneAdapter,
@@ -214,16 +215,7 @@ export class BebopDrone extends EventEmitter implements DroneAdapter {
 
   setPilotingCommand(command: PilotingCommand): void {
     this.requireClient();
-    this.client.stop();
-    if (!command.active) return;
-    if (command.pitch > 0) this.client.forward(command.pitch);
-    if (command.pitch < 0) this.client.backward(-command.pitch);
-    if (command.roll > 0) this.client.right(command.roll);
-    if (command.roll < 0) this.client.left(-command.roll);
-    if (command.yaw > 0) this.client.clockwise(command.yaw);
-    if (command.yaw < 0) this.client.counterClockwise(-command.yaw);
-    if (command.gaz > 0) this.client.up(command.gaz);
-    if (command.gaz < 0) this.client.down(-command.gaz);
+    applyBebopPilotingCommand(this.client, command);
   }
 
   stopMovement(): void {
