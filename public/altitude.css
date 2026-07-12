@@ -1,0 +1,54 @@
+.height-reading {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.height-reading strong {
+  font-size: 1.2rem;
+}
+
+.height-panel {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  background: #0f172a;
+}
+
+.height-panel meter {
+  width: 100%;
+  height: 18px;
+}
+
+.height-scale {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 6px;
+  color: #94a3b8;
+  font-size: 0.8rem;
+}
+
+.altitude-note {
+  margin: 10px 0 0;
+  color: #94a3b8;
+  font-size: 0.85rem;
+}
+
+.altitude-mode-restricted {
+  color: #f87171;
+  font-weight: 800;
+}
+
+.altitude-restricted [data-control]:not([data-control="down"]):not([data-control="stop"]) {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.altitude-restricted .flight-control-card {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.25);
+}
