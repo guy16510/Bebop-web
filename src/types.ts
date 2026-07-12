@@ -18,6 +18,16 @@ export interface DroneTelemetry {
   speedX: number;
   speedY: number;
   speedZ: number;
+  latitude?: number | null;
+  longitude?: number | null;
+  gpsAltitude?: number | null;
+  gpsFix?: boolean | null;
+  satellites?: number | null;
+  roll?: number | null;
+  pitch?: number | null;
+  yaw?: number | null;
+  cameraTilt?: number | null;
+  cameraPan?: number | null;
   flyingState: FlyingState;
   updatedAt: number;
 }
@@ -35,6 +45,7 @@ export interface DroneAdapter {
   takeoff(): Promise<void>;
   land(): Promise<void>;
   emergency(): Promise<void>;
+  setCameraOrientation(tilt: number, pan: number): void;
   setPilotingCommand(command: PilotingCommand): void;
   stopMovement(): void;
   startVideo(): Promise<Readable>;
