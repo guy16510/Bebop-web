@@ -25,7 +25,7 @@ Camera1.k3: 0.000000
 
 Camera.width: 428
 Camera.height: 240
-Camera.fps: 30.0
+Camera.fps: 30
 Camera.RGB: 0
 
 ORBextractor.nFeatures: 1600
