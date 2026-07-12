@@ -12,6 +12,7 @@
     "build": "tsc",
     "start": "node dist/src/server.js",
     "typecheck": "tsc --noEmit",
+    "check:client": "node --check public/app.js",
     "test": "vitest run",
     "video:inspect": "bash scripts/inspect-h264.sh"
   },

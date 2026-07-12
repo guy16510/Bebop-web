@@ -29,17 +29,17 @@
       </div>
     </section>
 
-    <section class="toolbar">
-      <button data-action="connect">Connect</button>
-      <button data-action="disconnect">Disconnect</button>
-      <button data-action="video-start">Start video</button>
-      <button data-action="video-stop">Stop video</button>
-      <button data-action="acquire">Acquire controls</button>
-      <button data-action="arm">Arm 10s</button>
-      <button data-action="disarm">Disarm</button>
-      <button id="takeoff-button" data-action="takeoff" disabled>Take off</button>
-      <button class="land" data-action="land">Land</button>
-      <button class="danger" data-action="emergency">Emergency</button>
+    <section class="toolbar" aria-label="Drone actions">
+      <button type="button" data-action="connect">Connect</button>
+      <button type="button" data-action="disconnect">Disconnect</button>
+      <button type="button" data-action="video-start">Start video</button>
+      <button type="button" data-action="video-stop">Stop video</button>
+      <button type="button" data-action="acquire">Acquire controls</button>
+      <button type="button" data-action="arm">Arm 10s</button>
+      <button type="button" data-action="disarm">Disarm</button>
+      <button type="button" id="takeoff-button" data-action="takeoff" disabled>Take off</button>
+      <button type="button" class="land" data-action="land">Land</button>
+      <button type="button" class="danger" data-action="emergency">Emergency, cut motors</button>
     </section>
 
     <section class="grid">
@@ -69,32 +69,33 @@
         </dl>
         <ul id="safety-warnings"></ul>
       </article>
-      <article>
-        <h2>Controls</h2>
-        <p>W/S pitch, A/D roll, Q/E yaw, R/F rise/fall, Space stop.</p>
+      <article class="controls-card">
+        <h2>Flight controls</h2>
+        <p>Press and hold a direction. Keyboard: W/S pitch, A/D roll, Q/E yaw, R/F rise/fall.</p>
+        <p><strong>STOP</strong> or Space immediately cancels movement. Land performs a controlled landing. Emergency cuts the motors.</p>
         <div id="pilot-status" class="status">Controls not acquired</div>
         <pre id="command">roll 0  pitch 0  yaw 0  gaz 0</pre>
         <div class="flight-controls" aria-label="Drone movement controls">
           <div class="control-pad direction-pad">
-            <button class="move forward" data-control="forward" aria-label="Move forward">▲</button>
-            <button class="move left" data-control="left" aria-label="Move left">◀</button>
-            <button class="move stop" data-control="stop" aria-label="Stop movement">■</button>
-            <button class="move right" data-control="right" aria-label="Move right">▶</button>
-            <button class="move backward" data-control="backward" aria-label="Move backward">▼</button>
+            <button type="button" class="move forward" data-control="forward" aria-label="Move forward" disabled>▲</button>
+            <button type="button" class="move left" data-control="left" aria-label="Move left" disabled>◀</button>
+            <button type="button" class="move stop" data-control="stop" aria-label="Stop all movement" disabled>STOP</button>
+            <button type="button" class="move right" data-control="right" aria-label="Move right" disabled>▶</button>
+            <button type="button" class="move backward" data-control="backward" aria-label="Move backward" disabled>▼</button>
           </div>
           <div class="control-column">
-            <button class="move" data-control="up">Up</button>
-            <button class="move" data-control="down">Down</button>
+            <button type="button" class="move" data-control="up" disabled>Up</button>
+            <button type="button" class="move" data-control="down" disabled>Down</button>
           </div>
           <div class="control-column">
-            <button class="move" data-control="yaw-left">↶ Yaw</button>
-            <button class="move" data-control="yaw-right">Yaw ↷</button>
+            <button type="button" class="move" data-control="yaw-left" disabled>↶ Yaw</button>
+            <button type="button" class="move" data-control="yaw-right" disabled>Yaw ↷</button>
           </div>
         </div>
       </article>
     </section>
 
-    <div id="message" role="status"></div>
+    <div id="message" role="status" aria-live="polite"></div>
   </main>
   <script type="module" src="/app.js"></script>
 </body>
