@@ -1,0 +1,38 @@
+name: ARM64 perception validation
+
+on:
+  pull_request:
+    paths:
+      - 'perception-sidecar/**'
+      - 'config/perception/**'
+      - 'scripts/build-perception-sidecar.sh'
+      - 'scripts/verify-perception-sidecar.sh'
+      - '.github/workflows/perception-arm64.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'perception-sidecar/**'
+      - 'config/perception/**'
+      - 'scripts/build-perception-sidecar.sh'
+      - 'scripts/verify-perception-sidecar.sh'
+      - '.github/workflows/perception-arm64.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: arm64-perception-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  perception-arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm native ARM64 runner
+        run: test "$(uname -m)" = "aarch64"
+      - name: Build sidecar natively for ARM64
+        run: docker build --file perception-sidecar/Dockerfile --tag bebop-perception-sidecar:arm64 .
+      - name: Run complete ARM64 engine and production replay verification
+        env:
+          PERCEPTION_IMAGE: bebop-perception-sidecar:arm64
+        run: bash scripts/verify-perception-sidecar.sh
