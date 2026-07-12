@@ -62,7 +62,10 @@ jobs:
           assert engines['ok'] is True
           assert engines['orbSlam3']['vocabularyLoaded'] is True
           assert engines['orbSlam3']['systemConstructed'] is True
-          assert engines['orbSlam3']['framesSubmitted'] == 18
+          assert engines['orbSlam3']['framesSubmitted'] == 120
+          assert engines['orbSlam3']['trackingReached'] is True
+          assert engines['orbSlam3']['maxTrackedPoints'] > 0
+          assert engines['orbSlam3']['maxTrackedFeatures'] >= 40
           assert engines['yolox']['modelLoaded'] is True
           assert engines['yolox']['inferenceExecuted'] is True
           assert engines['yolox']['outputElements'] > 0
@@ -70,6 +73,8 @@ jobs:
               'ok': True,
               'source': snapshot['source'],
               'framesSubmitted': engines['orbSlam3']['framesSubmitted'],
+              'maxTrackedPoints': engines['orbSlam3']['maxTrackedPoints'],
+              'maxTrackedFeatures': engines['orbSlam3']['maxTrackedFeatures'],
               'yoloxOutputElements': engines['yolox']['outputElements'],
           }))
           PY
