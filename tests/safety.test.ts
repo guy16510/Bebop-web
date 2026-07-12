@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SafetyController } from '../src/safety.js';
-import type { DroneSnapshot } from '../src/types.js';
+import type { DroneSnapshot, PilotingCommand } from '../src/types.js';
 
 function snapshot(overrides: Partial<DroneSnapshot> = {}): DroneSnapshot {
   const base: DroneSnapshot = {
@@ -24,6 +24,17 @@ function snapshot(overrides: Partial<DroneSnapshot> = {}): DroneSnapshot {
   };
 }
 
+function command(overrides: Partial<PilotingCommand> = {}): PilotingCommand {
+  return {
+    roll: 0,
+    pitch: 0,
+    yaw: 0,
+    gaz: 0,
+    active: true,
+    ...overrides,
+  };
+}
+
 describe('SafetyController', () => {
   it('requires an explicit arm before takeoff', () => {
     const safety = new SafetyController();
@@ -41,7 +52,7 @@ describe('SafetyController', () => {
   it('rejects stale telemetry', () => {
     const safety = new SafetyController();
     expect(() => safety.arm(snapshot(), 4_001)).toThrow('stale telemetry');
-    expect(safety.filterCommand(snapshot(), true, 4_001)).toBe(false);
+    expect(safety.filterCommand(snapshot(), command({ pitch: 20 }), 4_001)).toBeNull();
   });
 
   it('rejects takeoff with a low battery', () => {
@@ -53,5 +64,27 @@ describe('SafetyController', () => {
     const safety = new SafetyController();
     expect(safety.shouldRequestLanding(snapshot({ telemetry: { battery: 10, flyingState: 'flying' } as any }))).toBe(true);
     expect(safety.shouldRequestLanding(snapshot({ telemetry: { battery: 10, flyingState: 'landed' } as any }))).toBe(false);
+  });
+
+  it('rejects configured ceilings above 120 meters', () => {
+    expect(() => new SafetyController({
+      armWindowMs: 10_000,
+      telemetryWarningMs: 1_000,
+      telemetryLockoutMs: 3_000,
+      minimumTakeoffBatteryPercent: 20,
+      criticalBatteryPercent: 10,
+      maximumAltitudeMeters: 121,
+    })).toThrow('cannot exceed 120 m');
+  });
+
+  it('allows only a pure descent after reaching the altitude ceiling', () => {
+    const safety = new SafetyController();
+    const atCeiling = snapshot({ telemetry: { altitude: 120, flyingState: 'hovering' } as any });
+
+    expect(safety.getStatus(atCeiling, 1_000).altitudeRestricted).toBe(true);
+    expect(safety.filterCommand(atCeiling, command({ gaz: -20 }), 1_000)).toEqual(command({ gaz: -20 }));
+    expect(safety.filterCommand(atCeiling, command({ gaz: 20 }), 1_000)).toBeNull();
+    expect(safety.filterCommand(atCeiling, command({ pitch: 20 }), 1_000)).toBeNull();
+    expect(safety.filterCommand(atCeiling, command({ gaz: -20, yaw: 10 }), 1_000)).toBeNull();
   });
 });

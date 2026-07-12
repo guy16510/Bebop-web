@@ -13,6 +13,7 @@ Implemented:
 - Single-browser pilot ownership
 - Keyboard controls
 - Telemetry display
+- Height display in feet and meters
 - Simulation mode for safe development
 - Initial `node-bebop` adapter
 - Direct MJPEG browser preview
@@ -22,6 +23,7 @@ Implemented:
 - Server-enforced arm window and takeoff gating
 - Telemetry freshness movement lockout
 - Battery and altitude safety policy
+- Descent-only recovery at the altitude ceiling
 - One-shot critical-battery landing request
 - Safety status API and browser diagnostics
 - GitHub Actions checks for typecheck, tests, and build
@@ -61,6 +63,7 @@ Simulation mode is the default. Set `DRONE_MODE=bebop` for the physical drone.
 | Q / E | Yaw left / right |
 | R / F | Rise / descend |
 | Space | Stop movement |
+| Escape | Stop movement |
 
 The browser sends desired state at 20 Hz. The server owns the actual command frequency and resets movement after 250 ms without input.
 
@@ -76,7 +79,7 @@ Takeoff is rejected unless all of these are true:
 
 The arm state expires automatically and is consumed by a successful takeoff request. It is also cleared on disconnect, landing, emergency, pilot disconnect, and server shutdown.
 
-Active movement commands are replaced with a zero command when telemetry becomes stale or the configured altitude limit is exceeded. At critical battery while airborne, the server sends one landing request and stops movement.
+Active movement commands are replaced with a zero command when telemetry becomes stale. At the configured altitude ceiling, climb, yaw, pitch, and roll are rejected while a pure descent remains available. At critical battery while airborne, the server sends one landing request and stops movement.
 
 Safety status is available at:
 
@@ -92,10 +95,12 @@ TELEMETRY_WARNING_MS=1000
 TELEMETRY_LOCKOUT_MS=3000
 MINIMUM_TAKEOFF_BATTERY_PERCENT=20
 CRITICAL_BATTERY_PERCENT=10
-MAXIMUM_ALTITUDE_METERS=10
+MAXIMUM_ALTITUDE_METERS=120
 ```
 
-These application safeguards do not replace the drone firmware, the original controller, or normal flight precautions.
+`MAXIMUM_ALTITUDE_METERS` may be set lower than 120, but the application refuses to start if it is configured above 120 meters, approximately 394 feet. The dashboard-reported height is relative to the takeoff point and is not terrain-following above-ground-level data.
+
+The 120-meter application ceiling is intentionally below 400 feet. The dashboard cannot verify terrain changes, controlled airspace authorization, proximity to structures, temporary flight restrictions, or other operating conditions. These safeguards do not replace the drone firmware, the original controller, airspace checks, or normal flight precautions.
 
 ## Real Bebop validation
 
@@ -110,7 +115,8 @@ These application safeguards do not replace the drone firmware, the original con
 9. Start MJPEG preview and inspect `/api/video/health`.
 10. Capture raw H.264 and validate it with GStreamer.
 11. Verify browser disconnect immediately stops movement and disarms.
-12. Reinstall propellers only after all no-propeller tests pass.
+12. Verify the configured altitude ceiling blocks rise and lateral movement but still permits descent.
+13. Reinstall propellers only after all no-propeller tests pass.
 
 ## MJPEG endpoints
 
@@ -123,9 +129,7 @@ GET  /video.mjpeg
 
 MJPEG is the compatibility preview. Each browser has an effective one-frame buffer, so slow viewers drop old frames rather than accumulating latency.
 
-The preview defaults to `480x276` with FFmpeg MJPEG quality `5` to keep encoding
-latency low. Override these with `VIDEO_MJPEG_WIDTH`, `VIDEO_MJPEG_HEIGHT`, and
-`VIDEO_MJPEG_QUALITY` (1 is highest quality, 31 is fastest/lowest quality).
+The preview defaults to `480x276` with FFmpeg MJPEG quality `5` to keep encoding latency low. Override these with `VIDEO_MJPEG_WIDTH`, `VIDEO_MJPEG_HEIGHT`, and `VIDEO_MJPEG_QUALITY` (1 is highest quality, 31 is fastest/lowest quality).
 
 ## Raw H.264 capture
 
@@ -167,11 +171,12 @@ fdsrc -> bounded leaky queue -> h264parse -> avdec_h264 -> fakesink
 
 ```text
 Browser
-  | WebSocket controls, telemetry, and safety status
+  | WebSocket controls, telemetry, safety status, and height display
   | multipart MJPEG preview
 Node.js server
   | fixed-rate scheduler and command watchdog
   | flight safety controller
+  | altitude-aware command filter
   | latest-frame-only MJPEG fanout
   | raw H.264 capture and process supervision
 DroneAdapter
@@ -189,7 +194,7 @@ Node.js supervises and signals the media process. It does not decode full frames
 
 ## Next milestone
 
-1. Verify CI after the live safety integration.
+1. Validate the altitude telemetry and descent-only ceiling against the physical Bebop 2.
 2. Validate telemetry and raw capture against the physical Bebop 2.
 3. Add hold-to-confirm emergency handling.
 4. Add a GStreamer WebRTC pipeline and signaling.

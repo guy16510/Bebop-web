@@ -220,13 +220,14 @@ wss.on('connection', (socket) => {
             break;
           }
 
-          if (!safety.filterCommand(adapter.getSnapshot(), true)) {
+          const allowedCommand = safety.filterCommand(adapter.getSnapshot(), candidate);
+          if (!allowedCommand) {
             stopPiloting();
             sendPilotAck(socket, message.sequence, 'command', ZERO_COMMAND, false, serverReceivedAt, Date.now());
             break;
           }
 
-          desiredCommand = candidate;
+          desiredCommand = allowedCommand;
           lastCommandAt = Date.now();
           const serverAppliedAt = applyDesiredCommandNow();
           sendPilotAck(socket, message.sequence, 'command', desiredCommand, true, serverReceivedAt, serverAppliedAt);
@@ -307,7 +308,7 @@ wss.on('connection', (socket) => {
 setInterval(() => {
   const snapshot = adapter.getSnapshot();
   const timedOut = !pilot || Date.now() - lastCommandAt > commandTimeoutMs;
-  const blocked = !safety.filterCommand(snapshot, desiredCommand.active);
+  const blocked = desiredCommand.active && !safety.filterCommand(snapshot, desiredCommand);
 
   if ((timedOut || blocked) && desiredCommand.active) {
     stopPiloting();
