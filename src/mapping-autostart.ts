@@ -41,6 +41,7 @@ export interface MappingAutostartOptions {
   retryMs?: number;
   frameTimeoutMs?: number;
   staleFrameMs?: number;
+  trackingTimeoutMs?: number;
   intervalMs?: number;
   now?: () => number;
   onUpdate?: (status: MappingAutostartStatus) => void;
@@ -51,12 +52,14 @@ export class MappingAutostartCoordinator {
   private readonly retryMs: number;
   private readonly frameTimeoutMs: number;
   private readonly staleFrameMs: number;
+  private readonly trackingTimeoutMs: number;
   private readonly intervalMs: number;
   private enabled: boolean;
   private busy = false;
   private timer?: NodeJS.Timeout;
   private nextAttemptAt = 0;
   private videoAttemptStartedAt: number | null = null;
+  private trackingAttemptStartedAt: number | null = null;
   private status: MappingAutostartStatus;
 
   constructor(private readonly options: MappingAutostartOptions) {
@@ -64,6 +67,7 @@ export class MappingAutostartCoordinator {
     this.retryMs = Math.max(250, options.retryMs ?? 2_000);
     this.frameTimeoutMs = Math.max(1_000, options.frameTimeoutMs ?? 15_000);
     this.staleFrameMs = Math.max(1_000, options.staleFrameMs ?? 5_000);
+    this.trackingTimeoutMs = Math.max(5_000, options.trackingTimeoutMs ?? 30_000);
     this.intervalMs = Math.max(100, options.intervalMs ?? 500);
     this.enabled = options.enabled;
     this.status = {
@@ -97,6 +101,7 @@ export class MappingAutostartCoordinator {
     this.enabled = enabled;
     this.nextAttemptAt = 0;
     this.videoAttemptStartedAt = null;
+    this.trackingAttemptStartedAt = null;
     this.update(enabled ? 'waiting-for-drone' : 'disabled', null);
   }
 
@@ -115,12 +120,13 @@ export class MappingAutostartCoordinator {
     const connectionState = this.options.getConnectionState();
     if (connectionState !== 'connected') {
       this.videoAttemptStartedAt = null;
+      this.trackingAttemptStartedAt = null;
       if (now < this.nextAttemptAt || connectionState === 'connecting') {
         this.update(connectionState === 'connecting' ? 'connecting' : 'waiting-for-drone');
         return;
       }
-      this.update('connecting');
       this.status.attempts += 1;
+      this.update('connecting');
       try {
         await this.options.connect();
         this.nextAttemptAt = 0;
@@ -131,6 +137,8 @@ export class MappingAutostartCoordinator {
       return;
     }
 
+    if (now < this.nextAttemptAt) return;
+
     const video = this.options.getVideoHealth();
     const freshFrame = video.lastFrameAt !== null && now - video.lastFrameAt <= this.staleFrameMs;
     if (video.state === 'fault') {
@@ -138,12 +146,8 @@ export class MappingAutostartCoordinator {
       return;
     }
     if (video.state === 'disabled') {
-      if (now < this.nextAttemptAt) {
-        this.update('waiting-for-video');
-        return;
-      }
-      this.update('starting-video');
       this.status.attempts += 1;
+      this.update('starting-video');
       this.videoAttemptStartedAt = now;
       try {
         await this.options.startVideo();
@@ -154,6 +158,10 @@ export class MappingAutostartCoordinator {
       return;
     }
     if (!freshFrame) {
+      if (video.frames > 0 && video.lastFrameAt !== null && now - video.lastFrameAt > this.staleFrameMs) {
+        await this.recover('Decoded video stopped producing fresh frames');
+        return;
+      }
       this.update('waiting-for-video', video.lastError);
       const waitingSince = this.videoAttemptStartedAt ?? now;
       this.videoAttemptStartedAt = waitingSince;
@@ -174,9 +182,9 @@ export class MappingAutostartCoordinator {
       return;
     }
     if (perception.state === 'stopped') {
-      if (now < this.nextAttemptAt) return;
-      this.update('starting-perception');
       this.status.attempts += 1;
+      this.update('starting-perception');
+      this.trackingAttemptStartedAt = now;
       try {
         await this.options.startPerception();
         this.nextAttemptAt = 0;
@@ -187,17 +195,26 @@ export class MappingAutostartCoordinator {
       return;
     }
     if (perception.trackingState === 'tracking') {
+      this.trackingAttemptStartedAt = null;
       this.update('mapping', null);
+      return;
+    }
+
+    const trackingSince = this.trackingAttemptStartedAt ?? now;
+    this.trackingAttemptStartedAt = trackingSince;
+    if (now - trackingSince >= this.trackingTimeoutMs) {
+      await this.recover('ORB-SLAM3 did not establish or recover tracking before the timeout');
       return;
     }
     this.update('initializing', perception.lastError);
   }
 
   private async recover(reason: string): Promise<void> {
-    this.update('recovering', reason);
     this.status.recoveries += 1;
+    this.update('recovering', reason);
     await Promise.allSettled([this.options.stopPerception(), this.options.stopVideo()]);
     this.videoAttemptStartedAt = null;
+    this.trackingAttemptStartedAt = null;
     this.nextAttemptAt = this.now() + this.retryMs;
   }
 
