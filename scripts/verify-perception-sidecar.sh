@@ -11,7 +11,7 @@ docker run --rm "$IMAGE_NAME" --self-test > "$WORK_DIR/sidecar-self-test.json"
 
 docker run --rm \
   --entrypoint /usr/local/bin/bebop-perception-engine-self-test \
-  -e ORB_SETTINGS=/config/bebop2.example.yaml \
+  -e ORB_SETTINGS=/config/bebop2-upstream-428x240.yaml \
   -e SYNTHETIC_VIDEO_OUT=/replay/synthetic.avi \
   -v "$WORK_DIR/replay:/replay" \
   "$IMAGE_NAME" > "$WORK_DIR/engine-self-test.json"
@@ -22,7 +22,7 @@ EOF
 
 docker run --rm -i \
   --entrypoint /usr/local/bin/bebop-perception-sidecar \
-  -e ORB_SETTINGS=/config/bebop2.example.yaml \
+  -e ORB_SETTINGS=/config/bebop2-upstream-428x240.yaml \
   -e PERCEPTION_CAMERA_CALIBRATED=true \
   -e PERCEPTION_OUTPUT_HZ=30 \
   -e DETECTION_EVERY_N_FRAMES=10 \
@@ -46,6 +46,9 @@ assert snapshot['calibrated'] is True
 
 engines = json.loads((root / 'engine-self-test.json').read_text())
 assert engines['ok'] is True
+assert engines['camera']['model'] == 'PinHole'
+assert engines['camera']['width'] == 428
+assert engines['camera']['height'] == 240
 assert engines['orbSlam3']['vocabularyLoaded'] is True
 assert engines['orbSlam3']['systemConstructed'] is True
 assert engines['orbSlam3']['framesSubmitted'] == 120
@@ -75,6 +78,7 @@ assert any('yolox' in item['source'] for item in replay)
 
 print(json.dumps({
     'ok': True,
+    'camera': engines['camera'],
     'framesSubmitted': engines['orbSlam3']['framesSubmitted'],
     'maxLandmarks': max(len(item['map']['landmarks']) for item in replay),
     'maxTrajectory': max(len(item['trajectory']) for item in replay),
