@@ -80,6 +80,8 @@ export class MappingAutostartCoordinator {
   private nextAttemptAt = 0;
   private videoAttemptStartedAt: number | null = null;
   private trackingAttemptStartedAt: number | null = null;
+  private stopVideoRequested = false;
+  private stopPerceptionRequested = false;
   private status: MappingAutostartStatus;
 
   constructor(private readonly options: MappingAutostartOptions) {
@@ -129,6 +131,8 @@ export class MappingAutostartCoordinator {
   }
 
   setDesired(desired: MappingAutostartDesired): void {
+    this.stopVideoRequested ||= this.desired.video && !desired.video;
+    this.stopPerceptionRequested ||= this.desired.perception && !desired.perception;
     this.desired = { ...desired };
     this.nextAttemptAt = 0;
     this.videoAttemptStartedAt = null;
@@ -147,9 +151,9 @@ export class MappingAutostartCoordinator {
   }
 
   private async reconcile(): Promise<void> {
+    await this.applyRequestedStops();
     const enabled = enabledFor(this.desired);
     if (!enabled) {
-      await this.stopUndesiredPipelines(false, false);
       this.update('disabled', null);
       return;
     }
@@ -180,7 +184,6 @@ export class MappingAutostartCoordinator {
     }
 
     if (!this.desired.video) {
-      await this.stopUndesiredPipelines(false, false);
       this.update('connected', null);
       return;
     }
@@ -271,6 +274,17 @@ export class MappingAutostartCoordinator {
     }
     const video = this.options.getVideoHealth();
     if (!keepVideo && video.state !== 'disabled') tasks.push(this.options.stopVideo());
+    if (tasks.length > 0) await Promise.allSettled(tasks);
+  }
+
+  private async applyRequestedStops(): Promise<void> {
+    const stopVideo = this.stopVideoRequested;
+    const stopPerception = this.stopPerceptionRequested;
+    this.stopVideoRequested = false;
+    this.stopPerceptionRequested = false;
+    const tasks: Promise<void>[] = [];
+    if (stopPerception) tasks.push(this.options.stopPerception());
+    if (stopVideo) tasks.push(this.options.stopVideo());
     if (tasks.length > 0) await Promise.allSettled(tasks);
   }
 

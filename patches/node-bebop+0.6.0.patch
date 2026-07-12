@@ -1,8 +1,36 @@
 diff --git a/node_modules/node-bebop/lib/bebop.js b/node_modules/node-bebop/lib/bebop.js
-index 88a7b96..fbdb6a9 100644
+index 88a7b96..b382b00 100644
 --- a/node_modules/node-bebop/lib/bebop.js
 +++ b/node_modules/node-bebop/lib/bebop.js
-@@ -298,6 +298,13 @@ Bebop.prototype._packetReceiver = function(message) {
+@@ -244,7 +244,7 @@ Bebop.prototype.connect = function(callback) {
+     this._d2cServer.on("message", this._packetReceiver.bind(this));
+ 
+     // send pcmd values at 40hz
+-    setInterval(function() {
++    this._pcmdInterval = setInterval(function() {
+       this._writePacket(this._generatePCMD(this._pcmd));
+     }.bind(this), 25);
+ 
+@@ -259,6 +259,18 @@ Bebop.prototype.connect = function(callback) {
+   }.bind(this));
+ };
+ 
++Bebop.prototype.disconnect = function() {
++  if (this._pcmdInterval) {
++    clearInterval(this._pcmdInterval);
++    this._pcmdInterval = null;
++  }
++  if (this._discoveryClient && !this._discoveryClient.destroyed) {
++    this._discoveryClient.destroy();
++  }
++  try { this._d2cServer.close(); } catch (err) {}
++  try { this._c2dClient.close(); } catch (err) {}
++};
++
+ Bebop.prototype.discover = function(callback) {
+   this._discoveryClient.connect(this.discoveryPort, this.ip, function() {
+     this._discoveryClient.write(JSON.stringify({
+@@ -298,6 +310,13 @@ Bebop.prototype._packetReceiver = function(message) {
    if (networkFrame.id === constants.BD_NET_DC_EVENT_ID ||
        networkFrame.id === constants.BD_NET_DC_NAVDATA_ID) {
  
@@ -16,3 +44,17 @@ index 88a7b96..fbdb6a9 100644
      var commandProject = networkFrame.data.readUInt8(0),
          commandClass = networkFrame.data.readUInt8(1),
          commandId = networkFrame.data.readUInt16LE(2);
+@@ -793,8 +812,11 @@ Bebop.prototype._writePacket = function(packet) {
+   this._c2dClient.send(packet, 0, packet.length, this.c2dPort, this.ip,
+     function(err) {
+       if (err) {
+-        throw err;
++        // Network availability can change when the controller switches
++        // between Ethernet and the drone Wi-Fi. Do not crash the process for
++        // an asynchronous UDP send failure.
++        this.emit("socketError", err);
+       }
+-    }
++    }.bind(this)
+   );
+ };

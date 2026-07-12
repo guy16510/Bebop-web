@@ -275,6 +275,10 @@ export class BebopArStream2Video {
     // receiver so enabling it below starts a fresh H.264 sequence.
     try {
       this.options.disableVideo();
+      // MediaStreaming commands are sent over UDP. Give the drone time to
+      // apply the disable before sending the later enable; back-to-back
+      // commands can otherwise be observed out of order.
+      await delay(200);
     } catch {
       // The first start may occur before the command channel is fully ready.
     }
@@ -325,11 +329,16 @@ export class BebopArStream2Video {
       });
 
       process.stdin.end(createArStream2Sdp(this.options.droneIp, this.options.streamPort));
-      try {
-        this.options.enableVideo();
-      } catch (error) {
-        fail(error instanceof Error ? error : new Error(String(error)));
-      }
+      // Let FFmpeg parse the SDP and bind RTP/RTCP before the drone starts
+      // sending. This avoids losing the initial SPS/PPS packets.
+      setTimeout(() => {
+        if (settled) return;
+        try {
+          this.options.enableVideo();
+        } catch (error) {
+          fail(error instanceof Error ? error : new Error(String(error)));
+        }
+      }, 200);
     }).catch(async (error) => {
       await this.stopRawProcess();
       throw error;
@@ -385,7 +394,14 @@ export class BebopArStream2Video {
     } catch {
       // The command connection may already be gone.
     }
-    if (process && !process.killed) process.kill('SIGTERM');
+    if (process && process.exitCode === null && process.signalCode === null) {
+      process.kill('SIGTERM');
+      await waitForProcessExit(process, 1_000);
+      if (process.exitCode === null && process.signalCode === null) {
+        process.kill('SIGKILL');
+        await waitForProcessExit(process, 1_000);
+      }
+    }
   }
 
   private rawArgs(): string[] {
@@ -436,6 +452,24 @@ export class BebopArStream2Video {
       'pipe:1',
     ];
   }
+}
+
+async function waitForProcessExit(process: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<void> {
+  if (process.exitCode !== null || process.signalCode !== null) return;
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(finish, timeoutMs);
+    const onExit = () => finish();
+    function finish() {
+      clearTimeout(timer);
+      process.off('exit', onExit);
+      resolve();
+    }
+    process.once('exit', onExit);
+  });
+}
+
+function delay(timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, timeoutMs));
 }
 
 function appendDiagnostic(current: string, chunk: Buffer | Uint8Array): string {
