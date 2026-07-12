@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .env
+.bebop/
 *.log
 .DS_Store
 captures/
