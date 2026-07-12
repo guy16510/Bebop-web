@@ -155,25 +155,40 @@ class SimulatedDrone extends EventEmitter implements DroneAdapter {
 
 class BebopDrone extends EventEmitter implements DroneAdapter {
   private client: any;
+  private connectPromise?: Promise<void>;
   private mjpegStream?: Readable;
   private rawStream?: Readable;
   private snapshot: DroneSnapshot = new SimulatedDrone().getSnapshot();
 
   async connect() {
     if (this.snapshot.connectionState === 'connected') return;
-    this.patchConnection('connecting');
-    const module = await import('node-bebop');
-    const bebop = (module as any).default ?? module;
-    this.client = bebop.createClient();
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Bebop connection timed out')), 10000);
-      this.client.connect(() => {
-        clearTimeout(timeout);
-        this.bindTelemetry();
-        this.patchConnection('connected');
-        resolve();
+    if (this.connectPromise) return this.connectPromise;
+
+    this.connectPromise = (async () => {
+      this.patchConnection('connecting');
+      const module = await import('node-bebop');
+      const bebop = (module as any).default ?? module;
+      this.client = bebop.createClient();
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Bebop connection timed out')), 10000);
+        this.client.connect(() => {
+          clearTimeout(timeout);
+          this.bindTelemetry();
+          this.patchConnection('connected');
+          resolve();
+        });
       });
-    });
+    })();
+
+    try {
+      await this.connectPromise;
+    } catch (error) {
+      this.client = undefined;
+      this.patchConnection('fault');
+      throw error;
+    } finally {
+      this.connectPromise = undefined;
+    }
   }
 
   async disconnect() {

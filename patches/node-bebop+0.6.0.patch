@@ -1,0 +1,18 @@
+diff --git a/node_modules/node-bebop/lib/bebop.js b/node_modules/node-bebop/lib/bebop.js
+index 88a7b96..fbdb6a9 100644
+--- a/node_modules/node-bebop/lib/bebop.js
++++ b/node_modules/node-bebop/lib/bebop.js
+@@ -298,6 +298,13 @@ Bebop.prototype._packetReceiver = function(message) {
+   if (networkFrame.id === constants.BD_NET_DC_EVENT_ID ||
+       networkFrame.id === constants.BD_NET_DC_NAVDATA_ID) {
+ 
++    // Some Bebop firmware versions occasionally send an empty event or
++    // navigation frame. Ignore it instead of attempting to decode a command
++    // header that is not present.
++    if (!networkFrame.data || networkFrame.data.length < 4) {
++      return;
++    }
++
+     var commandProject = networkFrame.data.readUInt8(0),
+         commandClass = networkFrame.data.readUInt8(1),
+         commandId = networkFrame.data.readUInt16LE(2);
