@@ -24,6 +24,7 @@ concurrency:
 
 jobs:
   perception-arm64:
+    # Native ARM64 validation matches the Linux architecture used by Docker Desktop on Apple Silicon.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     steps:
