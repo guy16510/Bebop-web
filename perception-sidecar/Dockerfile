@@ -49,8 +49,15 @@ RUN git clone https://github.com/UZ-SLAMLab/ORB_SLAM3.git /opt/ORB_SLAM3 \
     && git checkout ${ORB_SLAM3_COMMIT} \
     && sed -i 's/-march=native//g' CMakeLists.txt Thirdparty/DBoW2/CMakeLists.txt Thirdparty/g2o/CMakeLists.txt \
     && sed -i 's/++11/++14/g' CMakeLists.txt Thirdparty/g2o/CMakeLists.txt Thirdparty/Sophus/CMakeLists.txt \
-    && chmod +x build.sh \
-    && ./build.sh \
+    && cmake -S Thirdparty/DBoW2 -B Thirdparty/DBoW2/build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build Thirdparty/DBoW2/build --parallel 2 \
+    && cmake -S Thirdparty/g2o -B Thirdparty/g2o/build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build Thirdparty/g2o/build --parallel 2 \
+    && cmake -S Thirdparty/Sophus -B Thirdparty/Sophus/build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build Thirdparty/Sophus/build --parallel 2 \
+    && tar -xf Vocabulary/ORBvoc.txt.tar.gz -C Vocabulary \
+    && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --target ORB_SLAM3 --parallel 2 \
     && test -s /opt/ORB_SLAM3/Vocabulary/ORBvoc.txt \
     && test -s /opt/ORB_SLAM3/lib/libORB_SLAM3.so
 
