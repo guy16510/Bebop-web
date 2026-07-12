@@ -139,6 +139,28 @@
   flex: 0 0 auto;
 }
 
+.slam-navigation-pad circle:first-child {
+  fill: rgba(250, 204, 21, 0.16);
+  stroke: #facc15;
+  stroke-width: 2;
+}
+
+.slam-navigation-pad circle:nth-child(2) {
+  fill: #fef08a;
+  stroke: #713f12;
+  stroke-width: 1;
+}
+
+.slam-navigation-pad text {
+  fill: #fef9c3;
+  font-size: 11px;
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: #020617;
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
 #navigation-error {
   margin: 0;
 }
