@@ -30,6 +30,8 @@ export interface AutonomySettings {
   minimumBatteryPercent: number;
   reserveBatteryPercent: number;
   minimumSignalRssi: number;
+  minimumGpsSatellites: number;
+  gpsTimeoutMs: number;
   targetAltitudeMeters: number;
   maximumAltitudeMeters: number;
   maximumHorizontalDistanceMeters: number;
@@ -79,6 +81,8 @@ export const DEFAULT_AUTONOMY_SETTINGS: AutonomySettings = {
   minimumBatteryPercent: 45,
   reserveBatteryPercent: 25,
   minimumSignalRssi: -75,
+  minimumGpsSatellites: 6,
+  gpsTimeoutMs: 3_000,
   targetAltitudeMeters: 1.2,
   maximumAltitudeMeters: 3,
   maximumHorizontalDistanceMeters: 30,
@@ -144,6 +148,8 @@ export function normalizeAutonomySettings(
     minimumBatteryPercent,
     reserveBatteryPercent,
     minimumSignalRssi: finiteNumber(source.minimumSignalRssi, defaults.minimumSignalRssi, -95, -35),
+    minimumGpsSatellites: finiteNumber(source.minimumGpsSatellites, defaults.minimumGpsSatellites, 4, 20),
+    gpsTimeoutMs: finiteNumber(source.gpsTimeoutMs, defaults.gpsTimeoutMs, 1_000, 10_000),
     targetAltitudeMeters,
     maximumAltitudeMeters,
     maximumHorizontalDistanceMeters: finiteNumber(

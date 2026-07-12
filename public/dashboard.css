@@ -1,0 +1,162 @@
+.app-header p {
+  margin: 6px 0 0;
+  color: #94a3b8;
+}
+
+.primary-actions {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  padding: 12px;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.96);
+  backdrop-filter: blur(10px);
+}
+
+.primary-actions button {
+  min-height: 48px;
+}
+
+.primary-actions .danger {
+  margin-left: auto;
+}
+
+.dashboard-grid > #autonomy-card,
+.dashboard-grid > #navigation-card,
+.dashboard-grid > .controls-card,
+.dashboard-grid > .perception-card {
+  grid-column: 1 / -1;
+}
+
+#autonomy-card { order: 0; }
+.telemetry-card, .safety-card { order: 10; }
+#navigation-card { order: 20; }
+.flight-control-card { order: 30; }
+.perception-card { order: 40; }
+.feature-card { order: 50; }
+.diagnostics-card { order: 60; }
+
+.dashboard-collapsible {
+  padding: 0 !important;
+  overflow: hidden;
+}
+
+.dashboard-collapsible > details > summary,
+.navigation-card > details > summary,
+.embedded-details > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.dashboard-collapsible > details > summary::-webkit-details-marker,
+.navigation-card > details > summary::-webkit-details-marker,
+.embedded-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.dashboard-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  min-height: 72px;
+  padding: 18px;
+}
+
+.dashboard-summary > span:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.dashboard-summary strong {
+  font-size: 18px;
+}
+
+.dashboard-summary small {
+  color: #94a3b8;
+}
+
+.dashboard-summary::after {
+  content: 'Show';
+  color: #93c5fd;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+details[open] > .dashboard-summary::after {
+  content: 'Hide';
+}
+
+.dashboard-summary > .status,
+.dashboard-summary > #control-readiness {
+  margin-left: auto;
+}
+
+.details-body {
+  padding: 0 18px 18px;
+  border-top: 1px solid #1f2937;
+}
+
+.secondary-actions {
+  margin-top: 18px;
+}
+
+.embedded-details {
+  margin: 16px 0;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  background: #0f172a;
+}
+
+.embedded-details > summary {
+  padding: 14px 16px;
+  color: #cbd5e1;
+  font-weight: 800;
+}
+
+.embedded-details > summary::after {
+  content: ' +';
+  color: #93c5fd;
+}
+
+.embedded-details[open] > summary::after {
+  content: ' −';
+}
+
+.embedded-details > div {
+  padding: 0 14px 14px;
+}
+
+.autonomy-primary-settings {
+  margin-top: 16px;
+}
+
+.navigation-card {
+  padding: 0 !important;
+  overflow: hidden;
+}
+
+.navigation-card .navigation-heading {
+  margin: 0;
+}
+
+@media (max-width: 700px) {
+  .primary-actions {
+    position: static;
+  }
+
+  .primary-actions .danger {
+    margin-left: 0;
+  }
+
+  .dashboard-summary {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .dashboard-summary > .status,
+  .dashboard-summary > #control-readiness {
+    margin-left: 0;
+  }
+}

@@ -3,19 +3,20 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Bebop Web</title>
+  <title>Bebop Autonomous Flight</title>
   <link rel="stylesheet" href="/styles.css" />
   <link rel="stylesheet" href="/readiness.css" />
   <link rel="stylesheet" href="/altitude.css" />
   <link rel="stylesheet" href="/perception.css" />
   <link rel="stylesheet" href="/features.css" />
+  <link rel="stylesheet" href="/dashboard.css" />
 </head>
 <body>
   <main>
-    <header>
+    <header class="app-header">
       <div>
-        <h1>Bebop Web</h1>
-        <p>Local control console for Parrot Bebop 2</p>
+        <h1>Bebop Autonomous Flight</h1>
+        <p>Mission control, safety status, and live video for Parrot Bebop 2</p>
       </div>
       <span id="connection" class="badge state-disconnected">disconnected</span>
     </header>
@@ -34,62 +35,16 @@
       </div>
     </section>
 
-    <section class="toolbar" aria-label="Drone actions">
-      <button type="button" data-action="connect">Connect</button>
-      <button type="button" data-action="disconnect">Disconnect</button>
+    <section class="toolbar primary-actions" aria-label="Primary flight actions">
+      <button type="button" class="primary" data-action="connect">Connect drone</button>
       <button type="button" data-action="video-start">Start video</button>
-      <button type="button" data-action="video-stop">Stop video</button>
-      <button type="button" class="primary" data-action="acquire">Acquire controls</button>
-      <button type="button" data-action="release" disabled>Release controls</button>
-      <button type="button" data-action="arm">Arm 10s</button>
-      <button type="button" data-action="disarm">Disarm</button>
-      <button type="button" id="takeoff-button" data-action="takeoff" disabled>Take off</button>
-      <button type="button" class="land" data-action="land">Land</button>
-      <button type="button" class="danger" data-action="emergency">Emergency, cut motors</button>
+      <button type="button" class="land" data-action="land">LAND NOW</button>
+      <button type="button" class="danger" data-action="emergency">EMERGENCY, CUT MOTORS</button>
     </section>
 
-    <section class="grid">
-      <article class="feature-card">
-        <div class="feature-heading">
-          <div>
-            <h2>Startup features</h2>
-            <p>These settings apply immediately and remain selected after restarting the app.</p>
-          </div>
-          <span id="feature-mode" class="status status-warning">loading</span>
-        </div>
-        <div class="feature-toggle-grid">
-          <label class="feature-toggle">
-            <span><strong>Automatic connection</strong><small>Retry the Bebop Wi-Fi connection until the drone is available.</small></span>
-            <input type="checkbox" data-runtime-feature="autoConnect" disabled />
-          </label>
-          <label class="feature-toggle">
-            <span><strong>Automatic video</strong><small>Start decoded video after the drone connects and recover stale frames.</small></span>
-            <input type="checkbox" data-runtime-feature="video" disabled />
-          </label>
-          <label class="feature-toggle">
-            <span><strong>SLAM + recognition processing</strong><small>Run the supervised ORB-SLAM3 and YOLOX sidecar. Enabling this also enables video.</small></span>
-            <input type="checkbox" data-runtime-feature="perception" disabled />
-          </label>
-          <label class="feature-toggle">
-            <span><strong>Detection overlay</strong><small>Show object boxes and recognized-object tracks in the dashboard.</small></span>
-            <input type="checkbox" data-runtime-feature="showDetections" disabled />
-          </label>
-          <label class="feature-toggle">
-            <span><strong>Map rendering</strong><small>Show the interactive trajectory and sparse-landmark map.</small></span>
-            <input type="checkbox" data-runtime-feature="showMap" disabled />
-          </label>
-        </div>
-        <dl class="feature-status-grid">
-          <div><dt>Automation stage</dt><dd id="automation-stage">--</dd></div>
-          <div><dt>Attempts</dt><dd id="automation-attempts">0</dd></div>
-          <div><dt>Recoveries</dt><dd id="automation-recoveries">0</dd></div>
-          <div><dt>Saved setting</dt><dd><span id="feature-revision">revision 0</span> · <span id="feature-updated-by">environment</span></dd></div>
-        </dl>
-        <p id="automation-error" hidden></p>
-      </article>
-
-      <article>
-        <h2>Telemetry</h2>
+    <section class="grid dashboard-grid">
+      <article class="telemetry-card">
+        <h2>Flight telemetry</h2>
         <dl>
           <div><dt>Battery</dt><dd id="battery">--</dd></div>
           <div><dt>Wi-Fi signal</dt><dd class="signal-reading"><span class="signal-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span id="signal">--</span></dd></div>
@@ -100,12 +55,12 @@
         <div class="height-panel">
           <meter id="altitude-meter" min="0" max="120" value="0">0</meter>
           <div class="height-scale"><span>0 ft</span><span id="altitude-limit">--</span></div>
-          <p class="altitude-note">Height is relative to the takeoff point. It is not terrain-following AGL data.</p>
+          <p class="altitude-note">Relative to takeoff point, not terrain-following AGL.</p>
         </div>
       </article>
 
-      <article>
-        <h2>Safety</h2>
+      <article class="safety-card">
+        <h2>Safety status</h2>
         <dl>
           <div><dt>Armed</dt><dd id="armed">No</dd></div>
           <div><dt>Arm expires</dt><dd id="arm-expires">--</dd></div>
@@ -117,110 +72,135 @@
         <ul id="safety-warnings"></ul>
       </article>
 
-      <article class="perception-card">
-        <div class="perception-heading">
-          <div>
-            <h2>Perception and SLAM</h2>
-            <p>Object detections, recognized tracks, camera pose, trajectory, and an interactive top-down landmark map. This output is read-only and never controls the drone.</p>
-          </div>
-          <span id="perception-state" class="status status-warning">stopped</span>
-        </div>
-        <div class="toolbar" aria-label="Perception actions">
-          <button type="button" class="primary" data-perception-action="start">Start perception</button>
-          <button type="button" data-perception-action="stop" disabled>Stop perception</button>
-          <button type="button" data-perception-action="reset">Reset map</button>
-        </div>
-        <p id="perception-error" class="perception-error" hidden></p>
-        <div class="perception-layout">
-          <div class="map-column">
-            <div class="map-toolbar" aria-label="Map controls">
-              <button type="button" id="map-fit">Fit map</button>
-              <button type="button" id="map-follow" aria-pressed="true">Follow drone</button>
-              <button type="button" id="map-export">Export JSON</button>
-              <label><input type="checkbox" data-map-layer="landmarks" checked /> Landmarks</label>
-              <label><input type="checkbox" data-map-layer="trajectory" checked /> Path</label>
-              <label><input type="checkbox" data-map-layer="objects" checked /> Objects</label>
-              <span id="map-zoom">100%</span>
+      <article class="controls-card flight-control-card dashboard-collapsible">
+        <details>
+          <summary class="dashboard-summary">
+            <span><strong>Manual flight controls</strong><small>Use only for direct piloting, testing, or recovery.</small></span>
+            <span id="pilot-status" class="status">Controls not acquired</span>
+          </summary>
+          <div class="details-body">
+            <div class="toolbar secondary-actions" aria-label="Manual drone actions">
+              <button type="button" data-action="disconnect">Disconnect</button>
+              <button type="button" data-action="video-stop">Stop video</button>
+              <button type="button" class="primary" data-action="acquire">Acquire controls</button>
+              <button type="button" data-action="release" disabled>Release controls</button>
+              <button type="button" data-action="arm">Arm 10s</button>
+              <button type="button" data-action="disarm">Disarm</button>
+              <button type="button" id="takeoff-button" data-action="takeoff" disabled>Take off</button>
             </div>
-            <div class="map-frame">
-              <svg id="slam-map" role="img" aria-label="Interactive top-down SLAM map"></svg>
-              <div id="map-tooltip" role="status" hidden></div>
-              <div class="map-legend" aria-hidden="true">
-                <span><i class="legend-landmark"></i>Landmark</span>
-                <span><i class="legend-path"></i>Trajectory</span>
-                <span><i class="legend-object"></i>Object</span>
-                <span><i class="legend-drone"></i>Drone</span>
+            <div id="control-availability" class="control-availability status-warning" role="status" aria-live="polite">Acquire controls to enable movement</div>
+            <div class="control-settings"><label for="control-strength">Movement strength<span>Starts at a conservative 20%. The server enforces its configured maximum.</span></label><input id="control-strength" type="range" min="5" max="35" step="5" value="20" /><output id="control-strength-value" for="control-strength">20%</output></div>
+            <button type="button" class="master-stop" data-control="stop" aria-label="Stop all movement" disabled>STOP MOVEMENT<small>Space or Escape</small></button>
+            <pre id="command">roll 0  pitch 0  yaw 0  gaz 0</pre>
+            <div class="flight-controls" aria-label="Drone movement controls">
+              <div class="control-pad direction-pad">
+                <button type="button" class="move forward" data-control="forward" aria-label="Move forward" aria-pressed="false" disabled>▲<small>Forward</small></button>
+                <button type="button" class="move left" data-control="left" aria-label="Move left" aria-pressed="false" disabled>◀<small>Left</small></button>
+                <button type="button" class="move stop" data-control="stop" aria-label="Stop all movement" disabled>STOP</button>
+                <button type="button" class="move right" data-control="right" aria-label="Move right" aria-pressed="false" disabled>▶<small>Right</small></button>
+                <button type="button" class="move backward" data-control="backward" aria-label="Move backward" aria-pressed="false" disabled>▼<small>Back</small></button>
+              </div>
+              <div class="control-column" aria-label="Altitude controls"><button type="button" class="move" data-control="up" aria-pressed="false" disabled>↑<small>Rise</small></button><button type="button" class="move" data-control="down" aria-pressed="false" disabled>↓<small>Descend</small></button></div>
+              <div class="control-column" aria-label="Yaw controls"><button type="button" class="move" data-control="yaw-left" aria-pressed="false" disabled>↶<small>Yaw left</small></button><button type="button" class="move" data-control="yaw-right" aria-pressed="false" disabled>↷<small>Yaw right</small></button></div>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <article class="feature-card controls-card dashboard-collapsible">
+        <details>
+          <summary class="dashboard-summary">
+            <span><strong>System startup and display</strong><small>Automatic connection, video, perception, overlays, and map visibility.</small></span>
+            <span id="feature-mode" class="status status-warning">loading</span>
+          </summary>
+          <div class="details-body">
+            <div class="feature-toggle-grid">
+              <label class="feature-toggle"><span><strong>Automatic connection</strong><small>Retry the Bebop Wi-Fi connection until available.</small></span><input type="checkbox" data-runtime-feature="autoConnect" disabled /></label>
+              <label class="feature-toggle"><span><strong>Automatic video</strong><small>Start video after connection and recover stale frames.</small></span><input type="checkbox" data-runtime-feature="video" disabled /></label>
+              <label class="feature-toggle"><span><strong>SLAM + recognition</strong><small>Run the ORB-SLAM3 and YOLOX sidecar.</small></span><input type="checkbox" data-runtime-feature="perception" disabled /></label>
+              <label class="feature-toggle"><span><strong>Detection overlay</strong><small>Show object boxes and recognized tracks.</small></span><input type="checkbox" data-runtime-feature="showDetections" disabled /></label>
+              <label class="feature-toggle"><span><strong>Map rendering</strong><small>Show trajectory and sparse landmarks.</small></span><input type="checkbox" data-runtime-feature="showMap" disabled /></label>
+            </div>
+            <dl class="feature-status-grid">
+              <div><dt>Automation stage</dt><dd id="automation-stage">--</dd></div>
+              <div><dt>Attempts</dt><dd id="automation-attempts">0</dd></div>
+              <div><dt>Recoveries</dt><dd id="automation-recoveries">0</dd></div>
+              <div><dt>Saved setting</dt><dd><span id="feature-revision">revision 0</span> · <span id="feature-updated-by">environment</span></dd></div>
+            </dl>
+            <p id="automation-error" hidden></p>
+          </div>
+        </details>
+      </article>
+
+      <article class="perception-card controls-card dashboard-collapsible">
+        <details>
+          <summary class="dashboard-summary">
+            <span><strong>Perception and SLAM map</strong><small>Engineering view for tracking, detections, and map health.</small></span>
+            <span id="perception-state" class="status status-warning">stopped</span>
+          </summary>
+          <div class="details-body">
+            <div class="toolbar" aria-label="Perception actions">
+              <button type="button" class="primary" data-perception-action="start">Start perception</button>
+              <button type="button" data-perception-action="stop" disabled>Stop perception</button>
+              <button type="button" data-perception-action="reset">Reset map</button>
+            </div>
+            <p id="perception-error" class="perception-error" hidden></p>
+            <div class="perception-layout">
+              <div class="map-column">
+                <div class="map-toolbar" aria-label="Map controls">
+                  <button type="button" id="map-fit">Fit map</button>
+                  <button type="button" id="map-follow" aria-pressed="true">Follow drone</button>
+                  <button type="button" id="map-export">Export JSON</button>
+                  <label><input type="checkbox" data-map-layer="landmarks" checked /> Landmarks</label>
+                  <label><input type="checkbox" data-map-layer="trajectory" checked /> Path</label>
+                  <label><input type="checkbox" data-map-layer="objects" checked /> Objects</label>
+                  <span id="map-zoom">100%</span>
+                </div>
+                <div class="map-frame">
+                  <svg id="slam-map" role="img" aria-label="Interactive top-down SLAM map"></svg>
+                  <div id="map-tooltip" role="status" hidden></div>
+                  <div class="map-legend" aria-hidden="true"><span><i class="legend-landmark"></i>Landmark</span><span><i class="legend-path"></i>Trajectory</span><span><i class="legend-object"></i>Object</span><span><i class="legend-drone"></i>Drone</span></div>
+                </div>
+              </div>
+              <div class="perception-side">
+                <dl>
+                  <div><dt>Backend</dt><dd id="perception-backend">--</dd></div>
+                  <div><dt>Tracking</dt><dd id="perception-tracking">--</dd></div>
+                  <div><dt>Scale</dt><dd id="perception-scale">--</dd></div>
+                  <div><dt>Rates</dt><dd id="perception-fps">--</dd></div>
+                  <div><dt>Latency</dt><dd id="perception-latency">--</dd></div>
+                  <div><dt>Tracked features</dt><dd id="perception-features">--</dd></div>
+                  <div><dt>Map points</dt><dd id="perception-map-points">--</dd></div>
+                  <div><dt>Objects</dt><dd id="perception-objects">--</dd></div>
+                  <div><dt>Keyframes</dt><dd id="perception-keyframes">--</dd></div>
+                </dl>
+                <div id="recognized-panel"><h3>Recognized objects</h3><p id="recognized-empty">No objects tracked.</p><ul id="recognized-objects"></ul></div>
               </div>
             </div>
           </div>
-          <div class="perception-side">
+        </details>
+      </article>
+
+      <article class="controls-card diagnostics-card dashboard-collapsible">
+        <details>
+          <summary class="dashboard-summary">
+            <span><strong>Control-link diagnostics</strong><small>Latency and server command acceptance, mainly for props-off validation.</small></span>
+            <strong id="control-readiness" class="readiness-pending">NOT READY</strong>
+          </summary>
+          <div class="details-body">
+            <div class="readiness-panel" aria-live="polite"><p id="control-readiness-detail">Run the 20-sample test, exercise one direction, release it, then press STOP.</p></div>
             <dl>
-              <div><dt>Backend</dt><dd id="perception-backend">--</dd></div>
-              <div><dt>Tracking</dt><dd id="perception-tracking">--</dd></div>
-              <div><dt>Scale</dt><dd id="perception-scale">--</dd></div>
-              <div><dt>Rates</dt><dd id="perception-fps">--</dd></div>
-              <div><dt>Latency</dt><dd id="perception-latency">--</dd></div>
-              <div><dt>Tracked features</dt><dd id="perception-features">--</dd></div>
-              <div><dt>Map points</dt><dd id="perception-map-points">--</dd></div>
-              <div><dt>Objects</dt><dd id="perception-objects">--</dd></div>
-              <div><dt>Keyframes</dt><dd id="perception-keyframes">--</dd></div>
+              <div><dt>WebSocket RTT</dt><dd id="ws-rtt">--</dd></div>
+              <div><dt>WebSocket p95</dt><dd id="ws-p95">--</dd></div>
+              <div><dt>Last command RTT</dt><dd id="command-rtt">--</dd></div>
+              <div><dt>Last STOP RTT</dt><dd id="stop-rtt">--</dd></div>
+              <div><dt>Server apply time</dt><dd id="server-apply">--</dd></div>
             </dl>
-            <div id="recognized-panel">
-              <h3>Recognized objects</h3>
-              <p id="recognized-empty">No objects tracked.</p>
-              <ul id="recognized-objects"></ul>
-            </div>
-            <p class="perception-note">Real mode uses a separate ORB-SLAM3 and YOLOX process. Map output cannot issue flight commands.</p>
+            <div class="toolbar"><button type="button" id="run-latency-test">Run 20-sample test</button><span id="latency-test-status" class="status">Not run</span></div>
+            <p>Last server-applied command:</p>
+            <pre id="server-command">No tracked command received</pre>
           </div>
-        </div>
-      </article>
-
-      <article class="controls-card">
-        <h2>Control diagnostics</h2>
-        <p>This measures the browser to Node server path and confirms the exact command accepted by the adapter. The Bebop API does not provide an acknowledgement from each motor.</p>
-        <div class="readiness-panel" aria-live="polite">
-          <strong id="control-readiness" class="readiness-pending">NOT READY</strong>
-          <p id="control-readiness-detail">Run the 20-sample test, exercise one direction, release it, then press STOP.</p>
-        </div>
-        <dl>
-          <div><dt>WebSocket RTT</dt><dd id="ws-rtt">--</dd></div>
-          <div><dt>WebSocket p95</dt><dd id="ws-p95">--</dd></div>
-          <div><dt>Last command RTT</dt><dd id="command-rtt">--</dd></div>
-          <div><dt>Last STOP RTT</dt><dd id="stop-rtt">--</dd></div>
-          <div><dt>Server apply time</dt><dd id="server-apply">--</dd></div>
-        </dl>
-        <p>Green limits: p95 at or below 50 ms, command and STOP RTT at or below 75 ms, server apply at or below 5 ms. Yellow is usable but marginal. Red is a no-go.</p>
-        <div class="toolbar"><button type="button" id="run-latency-test">Run 20-sample latency test</button><span id="latency-test-status" class="status">Not run</span></div>
-        <p>Last server-applied command:</p>
-        <pre id="server-command">No tracked command received</pre>
-        <h3>Props-off verification</h3>
-        <ol>
-          <li>Remove all propellers and place the drone on a stable surface.</li>
-          <li>Connect and acquire controls, then run the latency test.</li>
-          <li>Press and release every direction. Confirm the server-applied command changes to the expected single axis and returns to zero.</li>
-          <li>Hold a direction and press STOP. Confirm STOP RTT appears and the server-applied command immediately returns to all zeros.</li>
-          <li>With motors running and propellers still removed, hold a direction and close the browser tab. The server watchdog should stop movement within 250 ms.</li>
-          <li>Test Land and Emergency separately. Emergency must cut the motors immediately.</li>
-        </ol>
-      </article>
-
-      <article class="controls-card flight-control-card">
-        <div class="control-heading"><div><h2>Flight controls</h2><p>Press and hold a direction. Keyboard: W/S pitch, A/D roll, Q/E yaw, R/F rise/fall.</p><p><strong>STOP</strong>, Space, or Escape immediately cancels movement. Land performs a controlled landing. Emergency cuts the motors.</p></div><div id="pilot-status" class="status">Controls not acquired</div></div>
-        <div id="control-availability" class="control-availability status-warning" role="status" aria-live="polite">Acquire controls to enable movement</div>
-        <div class="control-settings"><label for="control-strength">Movement strength<span>Starts at a conservative 20%. The server still enforces its configured maximum.</span></label><input id="control-strength" type="range" min="5" max="35" step="5" value="20" /><output id="control-strength-value" for="control-strength">20%</output></div>
-        <button type="button" class="master-stop" data-control="stop" aria-label="Stop all movement" disabled>STOP MOVEMENT<small>Space or Escape</small></button>
-        <pre id="command">roll 0  pitch 0  yaw 0  gaz 0</pre>
-        <div class="flight-controls" aria-label="Drone movement controls">
-          <div class="control-pad direction-pad">
-            <button type="button" class="move forward" data-control="forward" aria-label="Move forward" aria-pressed="false" disabled>▲<small>Forward</small></button>
-            <button type="button" class="move left" data-control="left" aria-label="Move left" aria-pressed="false" disabled>◀<small>Left</small></button>
-            <button type="button" class="move stop" data-control="stop" aria-label="Stop all movement" disabled>STOP</button>
-            <button type="button" class="move right" data-control="right" aria-label="Move right" aria-pressed="false" disabled>▶<small>Right</small></button>
-            <button type="button" class="move backward" data-control="backward" aria-label="Move backward" aria-pressed="false" disabled>▼<small>Back</small></button>
-          </div>
-          <div class="control-column" aria-label="Altitude controls"><button type="button" class="move" data-control="up" aria-pressed="false" disabled>↑<small>Rise</small></button><button type="button" class="move" data-control="down" aria-pressed="false" disabled>↓<small>Descend</small></button></div>
-          <div class="control-column" aria-label="Yaw controls"><button type="button" class="move" data-control="yaw-left" aria-pressed="false" disabled>↶<small>Yaw left</small></button><button type="button" class="move" data-control="yaw-right" aria-pressed="false" disabled>↷<small>Yaw right</small></button></div>
-        </div>
+        </details>
       </article>
     </section>
 

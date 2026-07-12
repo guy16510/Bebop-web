@@ -81,6 +81,8 @@ const defaults = normalizeAutonomySettings({
   minimumBatteryPercent: envNumber('AUTONOMY_MINIMUM_BATTERY_PERCENT', DEFAULT_AUTONOMY_SETTINGS.minimumBatteryPercent),
   reserveBatteryPercent: envNumber('AUTONOMY_RESERVE_BATTERY_PERCENT', DEFAULT_AUTONOMY_SETTINGS.reserveBatteryPercent),
   minimumSignalRssi: envNumber('AUTONOMY_MINIMUM_SIGNAL_RSSI', DEFAULT_AUTONOMY_SETTINGS.minimumSignalRssi),
+  minimumGpsSatellites: envNumber('AUTONOMY_MINIMUM_GPS_SATELLITES', DEFAULT_AUTONOMY_SETTINGS.minimumGpsSatellites),
+  gpsTimeoutMs: envNumber('AUTONOMY_GPS_TIMEOUT_MS', DEFAULT_AUTONOMY_SETTINGS.gpsTimeoutMs),
   targetAltitudeMeters: envNumber('AUTONOMY_TARGET_ALTITUDE_METERS', DEFAULT_AUTONOMY_SETTINGS.targetAltitudeMeters),
   maximumAltitudeMeters: envNumber('AUTONOMY_MAXIMUM_ALTITUDE_METERS', DEFAULT_AUTONOMY_SETTINGS.maximumAltitudeMeters),
   maximumHorizontalDistanceMeters: envNumber(
@@ -197,6 +199,7 @@ let lastPilotAckAt: number | null = null;
 let lastLandRequestAt = 0;
 let homePosition: { latitude: number; longitude: number } | null = null;
 let geofenceViolationSince: number | null = null;
+let gpsUnhealthySince: number | null = null;
 let shuttingDown = false;
 
 const commandAckTimeoutMs = envNumber('AUTONOMY_COMMAND_ACK_TIMEOUT_MS', 750);
@@ -326,17 +329,24 @@ function navigationReadiness(settings: AutonomySettings, now = Date.now()): Auto
       ok: Boolean(pad?.gps),
       detail: pad?.gps ? `${pad.gps.latitude.toFixed(6)}, ${pad.gps.longitude.toFixed(6)}` : 'Pad-transfer requires GPS coordinates',
     });
+    const gpsAge = typeof drone?.telemetry.gpsUpdatedAt === 'number'
+      ? Math.max(0, now - drone.telemetry.gpsUpdatedAt)
+      : Number.POSITIVE_INFINITY;
+    const satellites = drone?.telemetry.satellites;
     const gpsReady = drone?.telemetry.gpsFix === true
       && typeof drone.telemetry.latitude === 'number'
       && typeof drone.telemetry.longitude === 'number'
-      && typeof drone.telemetry.yaw === 'number';
+      && typeof drone.telemetry.yaw === 'number'
+      && typeof satellites === 'number'
+      && satellites >= settings.minimumGpsSatellites
+      && gpsAge <= settings.gpsTimeoutMs;
     checks.push({
       key: 'gps-fix',
-      label: 'GPS and heading',
+      label: 'GPS quality and heading',
       ok: gpsReady,
       detail: gpsReady
-        ? `${drone?.telemetry.satellites ?? '?'} satellites, heading available`
-        : 'Pad-transfer requires a current GPS fix and yaw telemetry',
+        ? `${satellites} satellites, coordinates ${gpsAge} ms old`
+        : `Need ${settings.minimumGpsSatellites}+ satellites, fresh coordinates, and heading`,
     });
     const targetDistance = gpsReady && pad?.gps && drone
       ? gpsOffsetMeters(
@@ -513,6 +523,7 @@ function resetMissionTerminal(next: 'completed' | 'aborted' | 'fault'): void {
   deadlineAt = null;
   homePosition = null;
   geofenceViolationSince = null;
+  gpsUnhealthySince = null;
   lastPilotAckAt = null;
   transition(next);
 }
@@ -718,6 +729,8 @@ const settingsPatchSchema = z.object({
   minimumBatteryPercent: z.number().optional(),
   reserveBatteryPercent: z.number().optional(),
   minimumSignalRssi: z.number().optional(),
+  minimumGpsSatellites: z.number().optional(),
+  gpsTimeoutMs: z.number().optional(),
   targetAltitudeMeters: z.number().optional(),
   maximumAltitudeMeters: z.number().optional(),
   maximumHorizontalDistanceMeters: z.number().optional(),
@@ -987,6 +1000,27 @@ setInterval(() => {
       if (now - lowSignalSince >= 2_000) beginLanding('Wi-Fi signal remained below the mission minimum', 'aborted');
     } else {
       lowSignalSince = null;
+    }
+
+    if (settings.pattern === 'pad-transfer') {
+      const gpsAge = typeof drone?.telemetry.gpsUpdatedAt === 'number'
+        ? Math.max(0, now - drone.telemetry.gpsUpdatedAt)
+        : Number.POSITIVE_INFINITY;
+      const gpsHealthy = drone?.telemetry.gpsFix === true
+        && typeof drone.telemetry.latitude === 'number'
+        && typeof drone.telemetry.longitude === 'number'
+        && typeof drone.telemetry.yaw === 'number'
+        && typeof drone.telemetry.satellites === 'number'
+        && drone.telemetry.satellites >= settings.minimumGpsSatellites
+        && gpsAge <= settings.gpsTimeoutMs;
+      if (!gpsHealthy) {
+        gpsUnhealthySince ??= now;
+        if (now - gpsUnhealthySince >= 2_000) beginLanding('GPS quality or coordinates became stale', 'aborted');
+      } else {
+        gpsUnhealthySince = null;
+      }
+    } else {
+      gpsUnhealthySince = null;
     }
 
     const perceptionHealthy = perception?.state === 'running'
