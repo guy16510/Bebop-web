@@ -2,7 +2,7 @@ FROM ubuntu:22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG ORB_SLAM3_COMMIT=4452a3c4ab75b1cde34e5505a36ec3f9edcdc4c4
-ARG PANGOLIN_TAG=v0.6
+ARG PANGOLIN_COMMIT=d484494645cb7361374ac0ef6b27e9ee6feffbd7
 ARG YOLOX_VERSION=0.1.1rc0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -32,7 +32,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
-RUN git clone --depth 1 --branch ${PANGOLIN_TAG} https://github.com/stevenlovegrove/Pangolin.git /opt/Pangolin \
+RUN git clone https://github.com/stevenlovegrove/Pangolin.git /opt/Pangolin \
+    && cd /opt/Pangolin \
+    && git checkout ${PANGOLIN_COMMIT} \
     && cmake -S /opt/Pangolin -B /opt/Pangolin/build \
       -DCMAKE_BUILD_TYPE=Release \
       -DBUILD_PANGOLIN_PYTHON=OFF \
@@ -46,6 +48,7 @@ RUN git clone https://github.com/UZ-SLAMLab/ORB_SLAM3.git /opt/ORB_SLAM3 \
     && cd /opt/ORB_SLAM3 \
     && git checkout ${ORB_SLAM3_COMMIT} \
     && sed -i 's/-march=native//g' CMakeLists.txt Thirdparty/DBoW2/CMakeLists.txt Thirdparty/g2o/CMakeLists.txt \
+    && sed -i 's/++11/++14/g' CMakeLists.txt Thirdparty/g2o/CMakeLists.txt Thirdparty/Sophus/CMakeLists.txt \
     && chmod +x build.sh \
     && ./build.sh \
     && test -s /opt/ORB_SLAM3/Vocabulary/ORBvoc.txt \
