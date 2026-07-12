@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/readiness.css" />
   <link rel="stylesheet" href="/altitude.css" />
   <link rel="stylesheet" href="/perception.css" />
+  <link rel="stylesheet" href="/features.css" />
 </head>
 <body>
   <main>
@@ -48,21 +49,51 @@
     </section>
 
     <section class="grid">
+      <article class="feature-card">
+        <div class="feature-heading">
+          <div>
+            <h2>Startup features</h2>
+            <p>These settings apply immediately and remain selected after restarting the app.</p>
+          </div>
+          <span id="feature-mode" class="status status-warning">loading</span>
+        </div>
+        <div class="feature-toggle-grid">
+          <label class="feature-toggle">
+            <span><strong>Automatic connection</strong><small>Retry the Bebop Wi-Fi connection until the drone is available.</small></span>
+            <input type="checkbox" data-runtime-feature="autoConnect" disabled />
+          </label>
+          <label class="feature-toggle">
+            <span><strong>Automatic video</strong><small>Start decoded video after the drone connects and recover stale frames.</small></span>
+            <input type="checkbox" data-runtime-feature="video" disabled />
+          </label>
+          <label class="feature-toggle">
+            <span><strong>SLAM + recognition processing</strong><small>Run the supervised ORB-SLAM3 and YOLOX sidecar. Enabling this also enables video.</small></span>
+            <input type="checkbox" data-runtime-feature="perception" disabled />
+          </label>
+          <label class="feature-toggle">
+            <span><strong>Detection overlay</strong><small>Show object boxes and recognized-object tracks in the dashboard.</small></span>
+            <input type="checkbox" data-runtime-feature="showDetections" disabled />
+          </label>
+          <label class="feature-toggle">
+            <span><strong>Map rendering</strong><small>Show the interactive trajectory and sparse-landmark map.</small></span>
+            <input type="checkbox" data-runtime-feature="showMap" disabled />
+          </label>
+        </div>
+        <dl class="feature-status-grid">
+          <div><dt>Automation stage</dt><dd id="automation-stage">--</dd></div>
+          <div><dt>Attempts</dt><dd id="automation-attempts">0</dd></div>
+          <div><dt>Recoveries</dt><dd id="automation-recoveries">0</dd></div>
+          <div><dt>Saved setting</dt><dd><span id="feature-revision">revision 0</span> · <span id="feature-updated-by">environment</span></dd></div>
+        </dl>
+        <p id="automation-error" hidden></p>
+      </article>
+
       <article>
         <h2>Telemetry</h2>
         <dl>
           <div><dt>Battery</dt><dd id="battery">--</dd></div>
-          <div>
-            <dt>Wi-Fi signal</dt>
-            <dd class="signal-reading">
-              <span class="signal-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-              <span id="signal">--</span>
-            </dd>
-          </div>
-          <div>
-            <dt>Height above takeoff</dt>
-            <dd class="height-reading"><strong id="height-feet">--</strong><span id="altitude">--</span></dd>
-          </div>
+          <div><dt>Wi-Fi signal</dt><dd class="signal-reading"><span class="signal-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span id="signal">--</span></dd></div>
+          <div><dt>Height above takeoff</dt><dd class="height-reading"><strong id="height-feet">--</strong><span id="altitude">--</span></dd></div>
           <div><dt>Flight state</dt><dd id="flight-state">--</dd></div>
           <div><dt>Telemetry age</dt><dd id="telemetry-age">--</dd></div>
         </dl>
@@ -72,6 +103,7 @@
           <p class="altitude-note">Height is relative to the takeoff point. It is not terrain-following AGL data.</p>
         </div>
       </article>
+
       <article>
         <h2>Safety</h2>
         <dl>
@@ -84,6 +116,7 @@
         </dl>
         <ul id="safety-warnings"></ul>
       </article>
+
       <article class="perception-card">
         <div class="perception-heading">
           <div>
@@ -132,7 +165,7 @@
               <div><dt>Objects</dt><dd id="perception-objects">--</dd></div>
               <div><dt>Keyframes</dt><dd id="perception-keyframes">--</dd></div>
             </dl>
-            <div>
+            <div id="recognized-panel">
               <h3>Recognized objects</h3>
               <p id="recognized-empty">No objects tracked.</p>
               <ul id="recognized-objects"></ul>
@@ -141,6 +174,7 @@
           </div>
         </div>
       </article>
+
       <article class="controls-card">
         <h2>Control diagnostics</h2>
         <p>This measures the browser to Node server path and confirms the exact command accepted by the adapter. The Bebop API does not provide an acknowledgement from each motor.</p>
@@ -156,10 +190,7 @@
           <div><dt>Server apply time</dt><dd id="server-apply">--</dd></div>
         </dl>
         <p>Green limits: p95 at or below 50 ms, command and STOP RTT at or below 75 ms, server apply at or below 5 ms. Yellow is usable but marginal. Red is a no-go.</p>
-        <div class="toolbar">
-          <button type="button" id="run-latency-test">Run 20-sample latency test</button>
-          <span id="latency-test-status" class="status">Not run</span>
-        </div>
+        <div class="toolbar"><button type="button" id="run-latency-test">Run 20-sample latency test</button><span id="latency-test-status" class="status">Not run</span></div>
         <p>Last server-applied command:</p>
         <pre id="server-command">No tracked command received</pre>
         <h3>Props-off verification</h3>
@@ -172,34 +203,12 @@
           <li>Test Land and Emergency separately. Emergency must cut the motors immediately.</li>
         </ol>
       </article>
+
       <article class="controls-card flight-control-card">
-        <div class="control-heading">
-          <div>
-            <h2>Flight controls</h2>
-            <p>Press and hold a direction. Keyboard: W/S pitch, A/D roll, Q/E yaw, R/F rise/fall.</p>
-            <p><strong>STOP</strong>, Space, or Escape immediately cancels movement. Land performs a controlled landing. Emergency cuts the motors.</p>
-          </div>
-          <div id="pilot-status" class="status">Controls not acquired</div>
-        </div>
-
-        <div id="control-availability" class="control-availability status-warning" role="status" aria-live="polite">
-          Acquire controls to enable movement
-        </div>
-
-        <div class="control-settings">
-          <label for="control-strength">
-            Movement strength
-            <span>Starts at a conservative 20%. The server still enforces its configured maximum.</span>
-          </label>
-          <input id="control-strength" type="range" min="5" max="35" step="5" value="20" />
-          <output id="control-strength-value" for="control-strength">20%</output>
-        </div>
-
-        <button type="button" class="master-stop" data-control="stop" aria-label="Stop all movement" disabled>
-          STOP MOVEMENT
-          <small>Space or Escape</small>
-        </button>
-
+        <div class="control-heading"><div><h2>Flight controls</h2><p>Press and hold a direction. Keyboard: W/S pitch, A/D roll, Q/E yaw, R/F rise/fall.</p><p><strong>STOP</strong>, Space, or Escape immediately cancels movement. Land performs a controlled landing. Emergency cuts the motors.</p></div><div id="pilot-status" class="status">Controls not acquired</div></div>
+        <div id="control-availability" class="control-availability status-warning" role="status" aria-live="polite">Acquire controls to enable movement</div>
+        <div class="control-settings"><label for="control-strength">Movement strength<span>Starts at a conservative 20%. The server still enforces its configured maximum.</span></label><input id="control-strength" type="range" min="5" max="35" step="5" value="20" /><output id="control-strength-value" for="control-strength">20%</output></div>
+        <button type="button" class="master-stop" data-control="stop" aria-label="Stop all movement" disabled>STOP MOVEMENT<small>Space or Escape</small></button>
         <pre id="command">roll 0  pitch 0  yaw 0  gaz 0</pre>
         <div class="flight-controls" aria-label="Drone movement controls">
           <div class="control-pad direction-pad">
@@ -209,14 +218,8 @@
             <button type="button" class="move right" data-control="right" aria-label="Move right" aria-pressed="false" disabled>▶<small>Right</small></button>
             <button type="button" class="move backward" data-control="backward" aria-label="Move backward" aria-pressed="false" disabled>▼<small>Back</small></button>
           </div>
-          <div class="control-column" aria-label="Altitude controls">
-            <button type="button" class="move" data-control="up" aria-pressed="false" disabled>↑<small>Rise</small></button>
-            <button type="button" class="move" data-control="down" aria-pressed="false" disabled>↓<small>Descend</small></button>
-          </div>
-          <div class="control-column" aria-label="Yaw controls">
-            <button type="button" class="move" data-control="yaw-left" aria-pressed="false" disabled>↶<small>Yaw left</small></button>
-            <button type="button" class="move" data-control="yaw-right" aria-pressed="false" disabled>↷<small>Yaw right</small></button>
-          </div>
+          <div class="control-column" aria-label="Altitude controls"><button type="button" class="move" data-control="up" aria-pressed="false" disabled>↑<small>Rise</small></button><button type="button" class="move" data-control="down" aria-pressed="false" disabled>↓<small>Descend</small></button></div>
+          <div class="control-column" aria-label="Yaw controls"><button type="button" class="move" data-control="yaw-left" aria-pressed="false" disabled>↶<small>Yaw left</small></button><button type="button" class="move" data-control="yaw-right" aria-pressed="false" disabled>↷<small>Yaw right</small></button></div>
         </div>
       </article>
     </section>
@@ -227,5 +230,6 @@
   <script type="module" src="/readiness.js"></script>
   <script type="module" src="/altitude.js"></script>
   <script type="module" src="/perception.js"></script>
+  <script type="module" src="/features.js"></script>
 </body>
 </html>
