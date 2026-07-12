@@ -1,0 +1,41 @@
+name: Diagnose onboard vision patch
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    if: github.head_ref == 'feature/onboard-vision-avoidance' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/onboard-vision-avoidance
+          fetch-depth: 0
+      - name: Capture patch exception
+        run: |
+          set +e
+          python3 - <<'PY' > /tmp/onboard-vision-error.txt 2>&1
+          from pathlib import Path
+          import textwrap
+
+          workflow = Path('.github/workflows/apply-onboard-vision.yml').read_text()
+          marker = "          python3 - <<'PY'\n"
+          start = workflow.index(marker) + len(marker)
+          end = workflow.index("\n          PY\n", start)
+          script = textwrap.dedent(workflow[start:end])
+          exec(compile(script, 'apply-onboard-vision.py', 'exec'))
+          PY
+          status=$?
+          git reset --hard HEAD
+          cp /tmp/onboard-vision-error.txt .onboard-vision-error.txt
+          printf '\nexit_status=%s\n' "$status" >> .onboard-vision-error.txt
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .onboard-vision-error.txt
+          git commit -m "Capture onboard vision patch failure"
+          git push origin HEAD:feature/onboard-vision-avoidance
