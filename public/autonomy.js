@@ -24,42 +24,46 @@ function injectAutonomyDashboard() {
   card.innerHTML = `
     <div class="autonomy-heading">
       <div>
-        <h2>Autonomous flight</h2>
-        <p>Closed-loop takeoff, named-pad transfer, metric obstacle braking, AprilTag precision landing, and persisted mission limits.</p>
+        <h2>Autonomous mission</h2>
+        <p>Configure, validate, launch, and safely abort a closed-loop mission.</p>
       </div>
       <span id="autonomy-stage" class="status status-warning">connecting</span>
     </div>
     <div id="autonomy-banner" class="autonomy-banner" role="status">Connecting to the autonomy service on port ${configuredPort}.</div>
     <form id="autonomy-form">
       <div class="autonomy-toggle-grid">
-        <label class="feature-toggle autonomy-master"><span><strong>Enable autonomy</strong><small>Master gate. This does not automatically start a mission.</small></span><input id="autonomy-enabled" type="checkbox" /></label>
-        <label class="feature-toggle autonomy-physical"><span><strong>Allow physical flight</strong><small>Physical Bebop flight requires this persistent gate and typed confirmation for every launch.</small></span><input id="autonomy-physical" type="checkbox" /></label>
-        <label class="feature-toggle"><span><strong>Require live video</strong><small>Block takeoff unless decoded video is running.</small></span><input id="autonomy-require-video" type="checkbox" /></label>
-        <label class="feature-toggle"><span><strong>Require SLAM tracking</strong><small>Block takeoff and land if tracking remains lost.</small></span><input id="autonomy-require-perception" type="checkbox" /></label>
-        <label class="feature-toggle"><span><strong>Require landing marker</strong><small>Use the selected pad's AprilTag for final alignment instead of landing immediately.</small></span><input id="autonomy-require-marker" type="checkbox" /></label>
+        <label class="feature-toggle autonomy-master"><span><strong>Enable autonomy</strong><small>Master mission gate.</small></span><input id="autonomy-enabled" type="checkbox" /></label>
+        <label class="feature-toggle autonomy-physical"><span><strong>Allow physical flight</strong><small>Requires typed confirmation for every launch.</small></span><input id="autonomy-physical" type="checkbox" /></label>
+        <label class="feature-toggle"><span><strong>Require live video</strong><small>Block takeoff and land on stale frames.</small></span><input id="autonomy-require-video" type="checkbox" /></label>
+        <label class="feature-toggle"><span><strong>Require SLAM tracking</strong><small>Block takeoff and land if tracking is lost.</small></span><input id="autonomy-require-perception" type="checkbox" /></label>
+        <label class="feature-toggle"><span><strong>Require landing marker</strong><small>Align to the selected pad's AprilTag.</small></span><input id="autonomy-require-marker" type="checkbox" /></label>
       </div>
-      <div class="autonomy-settings-grid">
-        <label>Mission pattern<select id="autonomy-pattern"><option value="hover">Hover only</option><option value="yaw-scan">Hover + yaw scan</option><option value="pad-transfer">Fly to named pad</option></select></label>
+      <div class="autonomy-settings-grid autonomy-primary-settings">
+        <label>Mission<select id="autonomy-pattern"><option value="hover">Hover only</option><option value="yaw-scan">Hover + yaw scan</option><option value="pad-transfer">Fly to named pad</option></select></label>
         <label>Takeoff pad<select id="autonomy-takeoff-pad"><option value="">Unspecified</option></select></label>
         <label>Landing pad<select id="autonomy-landing-pad"><option value="">Immediate landing</option></select></label>
         <label>Target altitude, m<input id="autonomy-target-altitude" type="number" min="0.5" max="10" step="0.1" /></label>
-        <label>Autonomy ceiling, m<input id="autonomy-max-altitude" type="number" min="0.5" max="10" step="0.1" /></label>
         <label>Horizontal geofence, m<input id="autonomy-max-distance" type="number" min="2" max="100" step="1" /></label>
-        <label>Command strength, %<input id="autonomy-command" type="number" min="5" max="20" step="1" /></label>
-        <label>Minimum takeoff battery, %<input id="autonomy-min-battery" type="number" min="20" max="100" step="1" /></label>
-        <label>Landing reserve, %<input id="autonomy-reserve-battery" type="number" min="10" max="99" step="1" /></label>
-        <label>Minimum signal, dBm<input id="autonomy-min-signal" type="number" min="-95" max="-35" step="1" /></label>
-        <label>Telemetry timeout, ms<input id="autonomy-telemetry-timeout" type="number" min="500" max="5000" step="100" /></label>
-        <label>Hover time, seconds<input id="autonomy-hover-seconds" type="number" min="2" max="60" step="1" /></label>
-        <label>Yaw scan time, seconds<input id="autonomy-yaw-seconds" type="number" min="2" max="45" step="1" /></label>
-        <label>Navigation timeout, seconds<input id="autonomy-navigation-seconds" type="number" min="10" max="600" step="5" /></label>
-        <label>Marker search timeout, seconds<input id="autonomy-search-seconds" type="number" min="5" max="120" step="1" /></label>
-        <label>Maximum flight time, seconds<input id="autonomy-max-seconds" type="number" min="20" max="600" step="5" /></label>
+        <label>Maximum flight time, s<input id="autonomy-max-seconds" type="number" min="20" max="300" step="5" /></label>
       </div>
-      <div class="autonomy-save-row">
-        <button id="autonomy-save" type="submit">Save mission settings</button>
-        <span id="autonomy-revision">revision 0</span>
-      </div>
+      <details class="embedded-details">
+        <summary>Advanced safety and mission tuning</summary>
+        <div class="autonomy-settings-grid">
+          <label>Autonomy ceiling, m<input id="autonomy-max-altitude" type="number" min="0.5" max="10" step="0.1" /></label>
+          <label>Command strength, %<input id="autonomy-command" type="number" min="5" max="20" step="1" /></label>
+          <label>Minimum takeoff battery, %<input id="autonomy-min-battery" type="number" min="20" max="100" step="1" /></label>
+          <label>Landing reserve, %<input id="autonomy-reserve-battery" type="number" min="10" max="99" step="1" /></label>
+          <label>Minimum signal, dBm<input id="autonomy-min-signal" type="number" min="-95" max="-35" step="1" /></label>
+          <label>Minimum GPS satellites<input id="autonomy-min-satellites" type="number" min="4" max="20" step="1" /></label>
+          <label>GPS coordinate timeout, ms<input id="autonomy-gps-timeout" type="number" min="1000" max="10000" step="250" /></label>
+          <label>Telemetry timeout, ms<input id="autonomy-telemetry-timeout" type="number" min="500" max="5000" step="100" /></label>
+          <label>Hover time, s<input id="autonomy-hover-seconds" type="number" min="2" max="60" step="1" /></label>
+          <label>Yaw scan time, s<input id="autonomy-yaw-seconds" type="number" min="2" max="45" step="1" /></label>
+          <label>Navigation timeout, s<input id="autonomy-navigation-seconds" type="number" min="10" max="600" step="5" /></label>
+          <label>Marker search timeout, s<input id="autonomy-search-seconds" type="number" min="5" max="120" step="1" /></label>
+        </div>
+      </details>
+      <div class="autonomy-save-row"><button id="autonomy-save" type="submit">Save mission settings</button><span id="autonomy-revision">revision 0</span></div>
     </form>
     <div class="autonomy-runtime-grid">
       <div><span>Mode</span><strong id="autonomy-mode">--</strong></div>
@@ -69,10 +73,7 @@ function injectAutonomyDashboard() {
       <div><span>Target pad</span><strong id="autonomy-target-pad">--</strong></div>
       <div><span>Guidance</span><strong id="autonomy-guidance">--</strong></div>
     </div>
-    <div class="autonomy-preflight">
-      <h3>Preflight gates</h3>
-      <ul id="autonomy-readiness"></ul>
-    </div>
+    <div class="autonomy-preflight"><h3>Preflight gates</h3><ul id="autonomy-readiness"></ul></div>
     <div class="autonomy-launch-row">
       <label class="autonomy-confirm">Physical-flight confirmation<input id="autonomy-confirmation" type="text" autocomplete="off" placeholder="START AUTONOMOUS FLIGHT" /></label>
       <button id="autonomy-start" type="button" class="primary">Start autonomous mission</button>
@@ -83,10 +84,7 @@ function injectAutonomyDashboard() {
     <p id="autonomy-error" class="autonomy-error" hidden></p>
   `;
 
-  const grid = document.querySelector('.grid');
-  const featureCard = document.querySelector('.feature-card');
-  if (grid && featureCard) featureCard.insertAdjacentElement('afterend', card);
-  else grid?.prepend(card);
+  document.querySelector('.grid')?.prepend(card);
 
   bindAutonomyControls();
 }
@@ -106,6 +104,8 @@ function collectSettings() {
     minimumBatteryPercent: settingValue('autonomy-min-battery'),
     reserveBatteryPercent: settingValue('autonomy-reserve-battery'),
     minimumSignalRssi: settingValue('autonomy-min-signal'),
+    minimumGpsSatellites: settingValue('autonomy-min-satellites'),
+    gpsTimeoutMs: settingValue('autonomy-gps-timeout'),
     targetAltitudeMeters: settingValue('autonomy-target-altitude'),
     maximumAltitudeMeters: settingValue('autonomy-max-altitude'),
     maximumHorizontalDistanceMeters: settingValue('autonomy-max-distance'),
@@ -150,6 +150,8 @@ function populateSettings(settings) {
   $('autonomy-min-battery').value = settings.minimumBatteryPercent;
   $('autonomy-reserve-battery').value = settings.reserveBatteryPercent;
   $('autonomy-min-signal').value = settings.minimumSignalRssi;
+  $('autonomy-min-satellites').value = settings.minimumGpsSatellites;
+  $('autonomy-gps-timeout').value = settings.gpsTimeoutMs;
   $('autonomy-target-altitude').value = settings.targetAltitudeMeters;
   $('autonomy-max-altitude').value = settings.maximumAltitudeMeters;
   $('autonomy-max-distance').value = settings.maximumHorizontalDistanceMeters;

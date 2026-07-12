@@ -16,13 +16,12 @@ function injectNavigationDashboard() {
   card.id = 'navigation-card';
   card.className = 'navigation-card';
   card.innerHTML = `
-    <div class="navigation-heading">
-      <div>
-        <h2>Semantic navigation and landing pads</h2>
-        <p>The wide-angle camera recognizes objects and tags. Metric ToF or LiDAR ranges make collision decisions. GPS performs coarse pad transfer, AprilTags perform final landing alignment.</p>
-      </div>
-      <span id="navigation-state" class="status status-warning">waiting</span>
-    </div>
+    <details>
+      <summary class="dashboard-summary navigation-heading">
+        <span><strong>Navigation and landing-pad setup</strong><small>Configure range sensors, named pads, object rules, and precision landing.</small></span>
+        <span id="navigation-state" class="status status-warning">waiting</span>
+      </summary>
+      <div class="details-body">
 
     <section class="navigation-section">
       <h3>Obstacle avoidance</h3>
@@ -98,6 +97,8 @@ function injectNavigationDashboard() {
       <p class="navigation-note">Map positions are useful labels and visualization anchors. They are not used as physical meters while SLAM reports monocular scale. Different-pad physical flight requires GPS now, or a future metric VIO/UWB source indoors.</p>
     </section>
     <p id="navigation-error" class="autonomy-error" hidden></p>
+      </div>
+    </details>
   `;
 
   const autonomyCard = $('autonomy-card');

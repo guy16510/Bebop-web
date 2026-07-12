@@ -61,6 +61,7 @@ export class SimulatedDrone extends EventEmitter implements DroneAdapter {
       gpsAltitude: 50,
       gpsFix: true,
       satellites: 12,
+      gpsUpdatedAt: Date.now(),
       roll: 0,
       pitch: 0,
       yaw: 0,
@@ -174,6 +175,7 @@ export class SimulatedDrone extends EventEmitter implements DroneAdapter {
       const east = forwardMetersPerSecond * Math.sin(yaw) + rightMetersPerSecond * Math.cos(yaw);
       if (typeof telemetry.latitude === 'number' && typeof telemetry.longitude === 'number') {
         telemetry.latitude += north * 0.1 / 111_132.92;
+        telemetry.gpsUpdatedAt = Date.now();
         const longitudeScale = 111_412.84 * Math.cos(telemetry.latitude * Math.PI / 180);
         telemetry.longitude += east * 0.1 / longitudeScale;
       }
@@ -215,6 +217,7 @@ export class BebopDrone extends EventEmitter implements DroneAdapter {
       gpsAltitude: null,
       gpsFix: false,
       satellites: null,
+      gpsUpdatedAt: null,
       roll: null,
       pitch: null,
       yaw: null,
@@ -414,6 +417,9 @@ export class BebopDrone extends EventEmitter implements DroneAdapter {
       if (latitude !== null && Math.abs(latitude) <= 90 && latitude !== 500) this.snapshot.telemetry.latitude = latitude;
       if (longitude !== null && Math.abs(longitude) <= 180 && longitude !== 500) this.snapshot.telemetry.longitude = longitude;
       if (altitude !== null && altitude !== 500) this.snapshot.telemetry.gpsAltitude = altitude;
+      if (typeof this.snapshot.telemetry.latitude === 'number' && typeof this.snapshot.telemetry.longitude === 'number') {
+        this.snapshot.telemetry.gpsUpdatedAt = Date.now();
+      }
       update();
     });
     this.client.on('SpeedChanged', (event: unknown) => {

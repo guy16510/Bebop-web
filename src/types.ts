@@ -23,6 +23,7 @@ export interface DroneTelemetry {
   gpsAltitude?: number | null;
   gpsFix?: boolean | null;
   satellites?: number | null;
+  gpsUpdatedAt?: number | null;
   roll?: number | null;
   pitch?: number | null;
   yaw?: number | null;

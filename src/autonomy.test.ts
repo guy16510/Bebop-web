@@ -48,11 +48,15 @@ describe('autonomy settings', () => {
       targetAltitudeMeters: 200,
       commandPercent: 80,
       maximumFlightSeconds: 10_000,
+      minimumGpsSatellites: 100,
+      gpsTimeoutMs: 50_000,
     });
     expect(settings.maximumAltitudeMeters).toBe(10);
     expect(settings.targetAltitudeMeters).toBe(10);
     expect(settings.commandPercent).toBe(20);
     expect(settings.maximumFlightSeconds).toBe(300);
+    expect(settings.minimumGpsSatellites).toBe(20);
+    expect(settings.gpsTimeoutMs).toBe(10_000);
   });
 
   it('persists dashboard settings', () => {
