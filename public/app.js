@@ -231,7 +231,6 @@ document.querySelectorAll('[data-action]').forEach((button) => {
   button.addEventListener('click', () => {
     $('message').textContent = '';
     const actionName = button.dataset.action;
-    if (actionName === 'emergency' && !window.confirm('Emergency cuts the motors immediately. Continue?')) return;
     if (['disconnect', 'disarm', 'land', 'emergency'].includes(actionName)) clearControlState();
 
     const actions = {
