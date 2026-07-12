@@ -2,11 +2,21 @@ const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}:/
 const keys = new Set();
 const heldControls = new Set();
 const flightKeys = new Set(['w', 's', 'a', 'd', 'q', 'e', 'r', 'f']);
+const pendingControls = new Map();
+const pendingPings = new Map();
+const commandLatencies = [];
+const pingLatencies = [];
 let pilot = false;
 let lastState;
 let safetyStatus;
 let videoHealth;
 let videoAttached = false;
+let controlSequence = 0;
+let pingSequence = 0;
+let lastCommandRtt = null;
+let lastStopRtt = null;
+let lastServerApplyMs = null;
+let latencyTestRemaining = 0;
 
 const $ = (id) => document.getElementById(id);
 const send = (message) => {
@@ -29,6 +39,8 @@ socket.addEventListener('message', (event) => {
     videoHealth = message.health;
     renderVideo();
   }
+  if (message.type === 'diagnostic.pong') handlePong(message);
+  if (message.type === 'pilot.ack') handlePilotAck(message);
   if (message.type === 'pilot.granted') {
     pilot = true;
     $('pilot-status').textContent = 'Controls acquired';
@@ -54,13 +66,19 @@ socket.addEventListener('message', (event) => {
   if (message.type === 'error') $('message').textContent = message.message;
 });
 
-socket.addEventListener('open', () => updateControlAvailability());
+socket.addEventListener('open', () => {
+  updateControlAvailability();
+  sendPing();
+});
 socket.addEventListener('close', () => {
   pilot = false;
   clearControlState();
+  pendingControls.clear();
+  pendingPings.clear();
   $('pilot-status').textContent = 'Connection closed';
   updateControlAvailability();
   renderSafety();
+  updateDiagnostics();
 });
 
 function render() {
@@ -140,8 +158,12 @@ function commandFromControls() {
       + ((keys.has('f') || heldControls.has('down')) ? -amount : 0),
     active: keys.size > 0 || heldControls.size > 0,
   };
-  $('command').textContent = `roll ${command.roll}  pitch ${command.pitch}  yaw ${command.yaw}  gaz ${command.gaz}`;
+  $('command').textContent = formatCommand(command);
   return command;
+}
+
+function formatCommand(command) {
+  return `roll ${command.roll}  pitch ${command.pitch}  yaw ${command.yaw}  gaz ${command.gaz}`;
 }
 
 function clearControlState() {
@@ -150,13 +172,85 @@ function clearControlState() {
   commandFromControls();
 }
 
-function sendCurrentCommand() {
-  if (pilot) send({ type: 'pilot.command', command: commandFromControls() });
+function sendCurrentCommand(track = false) {
+  if (!pilot) return;
+  const command = commandFromControls();
+  if (!track) {
+    send({ type: 'pilot.command', command });
+    return;
+  }
+
+  const sequence = ++controlSequence;
+  pendingControls.set(sequence, performance.now());
+  send({ type: 'pilot.command', sequence, command });
 }
 
 function requestStop() {
   clearControlState();
-  if (pilot) send({ type: 'pilot.stop' });
+  if (!pilot) return;
+  const sequence = ++controlSequence;
+  pendingControls.set(sequence, performance.now());
+  send({ type: 'pilot.stop', sequence });
+}
+
+function sendPing(isTest = false) {
+  if (socket.readyState !== WebSocket.OPEN) return;
+  const id = ++pingSequence;
+  pendingPings.set(id, { startedAt: performance.now(), isTest });
+  send({ type: 'diagnostic.ping', id });
+}
+
+function handlePong(message) {
+  const pending = pendingPings.get(message.id);
+  if (pending === undefined) return;
+  pendingPings.delete(message.id);
+  recordSample(pingLatencies, performance.now() - pending.startedAt);
+  if (pending.isTest && latencyTestRemaining > 0) {
+    latencyTestRemaining -= 1;
+    $('latency-test-status').textContent = latencyTestRemaining === 0
+      ? '20-sample test complete'
+      : `${latencyTestRemaining} samples remaining`;
+  }
+  updateDiagnostics();
+}
+
+function handlePilotAck(message) {
+  const startedAt = pendingControls.get(message.sequence);
+  if (startedAt !== undefined) {
+    pendingControls.delete(message.sequence);
+    const rtt = performance.now() - startedAt;
+    recordSample(commandLatencies, rtt);
+    if (message.kind === 'stop') lastStopRtt = rtt;
+    else lastCommandRtt = rtt;
+  }
+
+  lastServerApplyMs = Math.max(0, message.serverAppliedAt - message.serverReceivedAt);
+  $('server-command').textContent = `${message.accepted ? 'accepted' : 'blocked'}: ${formatCommand(message.command)}`;
+  updateDiagnostics();
+}
+
+function recordSample(samples, value) {
+  samples.push(value);
+  if (samples.length > 100) samples.shift();
+}
+
+function percentile(samples, ratio) {
+  if (samples.length === 0) return null;
+  const sorted = [...samples].sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.ceil(sorted.length * ratio) - 1);
+  return sorted[Math.max(0, index)];
+}
+
+function displayMs(value) {
+  return value === null ? '--' : `${value.toFixed(1)} ms`;
+}
+
+function updateDiagnostics() {
+  $('ws-rtt').textContent = displayMs(pingLatencies.at(-1) ?? null);
+  $('ws-p95').textContent = displayMs(percentile(pingLatencies, 0.95));
+  $('command-rtt').textContent = displayMs(lastCommandRtt);
+  $('stop-rtt').textContent = displayMs(lastStopRtt);
+  $('server-apply').textContent = displayMs(lastServerApplyMs);
 }
 
 function updateControlAvailability() {
@@ -179,15 +273,16 @@ addEventListener('keydown', (event) => {
   const key = event.key.toLowerCase();
   if (!flightKeys.has(key)) return;
   event.preventDefault();
+  if (keys.has(key)) return;
   keys.add(key);
-  sendCurrentCommand();
+  sendCurrentCommand(true);
 });
 
 addEventListener('keyup', (event) => {
   const key = event.key.toLowerCase();
   if (!flightKeys.has(key)) return;
   keys.delete(key);
-  sendCurrentCommand();
+  sendCurrentCommand(true);
 });
 addEventListener('blur', requestStop);
 addEventListener('pagehide', requestStop);
@@ -207,14 +302,14 @@ document.querySelectorAll('[data-control]').forEach((button) => {
 
   const release = () => {
     if (!heldControls.delete(control)) return;
-    sendCurrentCommand();
+    sendCurrentCommand(true);
   };
 
   button.addEventListener('pointerdown', (event) => {
     event.preventDefault();
     button.setPointerCapture(event.pointerId);
     heldControls.add(control);
-    sendCurrentCommand();
+    sendCurrentCommand(true);
   });
   button.addEventListener('pointerup', release);
   button.addEventListener('pointercancel', release);
@@ -222,10 +317,22 @@ document.querySelectorAll('[data-control]').forEach((button) => {
 });
 
 setInterval(() => {
-  if (pilot) sendCurrentCommand();
+  if (pilot) sendCurrentCommand(false);
   render();
   renderSafety();
 }, 50);
+
+setInterval(sendPing, 1000);
+
+$('run-latency-test').addEventListener('click', () => {
+  pingLatencies.length = 0;
+  pendingPings.clear();
+  latencyTestRemaining = 20;
+  $('latency-test-status').textContent = '20 samples remaining';
+  for (let index = 0; index < 20; index += 1) {
+    setTimeout(() => sendPing(true), index * 75);
+  }
+});
 
 document.querySelectorAll('[data-action]').forEach((button) => {
   button.addEventListener('click', () => {
@@ -251,3 +358,4 @@ document.querySelectorAll('[data-action]').forEach((button) => {
 });
 
 updateControlAvailability();
+updateDiagnostics();
