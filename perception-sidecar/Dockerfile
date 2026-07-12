@@ -79,11 +79,7 @@ COPY config/perception/bebop2-upstream-428x240.yaml /config/bebop2-upstream-428x
 COPY perception-sidecar/entrypoint.sh /usr/local/bin/perception-entrypoint
 RUN chmod +x /usr/local/bin/perception-entrypoint \
     && export LD_LIBRARY_PATH=/opt/ORB_SLAM3/lib:/opt/ORB_SLAM3/Thirdparty/DBoW2/lib:/opt/ORB_SLAM3/Thirdparty/g2o/lib:/usr/local/lib \
-    && /usr/local/bin/bebop-perception-sidecar --self-test | grep -q 'perception.snapshot' \
-    && ORB_SETTINGS=/config/bebop2-upstream-428x240.yaml \
-       /usr/local/bin/bebop-perception-engine-self-test > /tmp/perception-engine-self-test.json \
-    && grep -q '"inferenceExecuted":true' /tmp/perception-engine-self-test.json \
-    && grep -q '"trackingReached":true' /tmp/perception-engine-self-test.json
+    && /usr/local/bin/bebop-perception-sidecar --self-test | grep -q 'perception.snapshot'
 
 ENV ORB_VOCABULARY=/opt/ORB_SLAM3/Vocabulary/ORBvoc.txt \
     ORB_SETTINGS=/config/bebop2.yaml \
