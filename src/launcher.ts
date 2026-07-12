@@ -32,7 +32,9 @@ interface ErrorMessage {
   message: string;
 }
 
-type ServerMessage = DroneStateMessage | VideoHealthMessage | PerceptionStatusMessage | ErrorMessage | { type: string };
+type ServerMessage = DroneStateMessage | VideoHealthMessage | PerceptionStatusMessage | ErrorMessage;
+type VideoHealth = VideoHealthMessage['health'];
+type PerceptionHealth = PerceptionStatusMessage['health'];
 
 function envBoolean(name: string, fallback: boolean): boolean {
   const value = process.env[name];
@@ -52,16 +54,16 @@ let socket: WebSocket | undefined;
 let socketPromise: Promise<WebSocket> | undefined;
 let lastCommandError: string | null = null;
 let droneConnectionState = 'disconnected';
-let videoHealth = {
-  state: 'disabled' as const,
+let videoHealth: VideoHealth = {
+  state: 'disabled',
   frames: 0,
-  lastFrameAt: null as number | null,
-  lastError: null as string | null,
+  lastFrameAt: null,
+  lastError: null,
 };
-let perceptionHealth = {
-  state: 'stopped' as const,
-  trackingState: 'disabled' as const,
-  lastError: null as string | null,
+let perceptionHealth: PerceptionHealth = {
+  state: 'stopped',
+  trackingState: 'disabled',
+  lastError: null,
 };
 
 function connectSocket(): Promise<WebSocket> {
@@ -159,7 +161,12 @@ const coordinator = new MappingAutostartCoordinator({
   onUpdate: (status) => {
     if (status.stage === 'fault' || status.stage === 'recovering') {
       console.error(JSON.stringify({ component: 'mapping-autostart', ...status }));
-    } else if (status.stage === 'mapping' || status.stage === 'connecting' || status.stage === 'starting-video' || status.stage === 'starting-perception') {
+    } else if (
+      status.stage === 'mapping'
+      || status.stage === 'connecting'
+      || status.stage === 'starting-video'
+      || status.stage === 'starting-perception'
+    ) {
       console.log(JSON.stringify({ component: 'mapping-autostart', ...status }));
     }
   },
