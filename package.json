@@ -16,7 +16,7 @@
     "test": "vitest run",
     "perception:smoke": "npm run build && node scripts/perception-smoke.mjs && node scripts/perception-server-smoke.mjs",
     "perception:sidecar:build": "bash scripts/build-perception-sidecar.sh",
-    "perception:sidecar:self-test": "docker run --rm ${PERCEPTION_IMAGE:-bebop-perception-sidecar:local} --self-test",
+    "perception:sidecar:self-test": "bash scripts/test-perception-sidecar.sh",
     "perception:calibrate": "python3 scripts/calibrate-bebop-camera.py",
     "video:inspect": "bash scripts/inspect-h264.sh"
   },
