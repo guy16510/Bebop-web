@@ -94,6 +94,6 @@ jobs:
         run: |
           git checkout main
           git pull --ff-only origin main
-          git rm .github/workflows/finalize-dashboard-cleanup.yml
+          git rm .github/workflows/finalize-dashboard-cleanup.yml .github/finalizer-trigger
           git commit -m "Remove dashboard cleanup finalizer"
           git push origin main
