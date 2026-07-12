@@ -1,0 +1,36 @@
+name: Diagnose autonomy hardening patch
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/autonomy-hardening
+          fetch-depth: 0
+      - name: Apply patch and capture diagnostics
+        shell: bash
+        run: |
+          set +e
+          awk '/python3 - <<'\''PY'\''/{capture=1;next} /^          PY$/{capture=0} capture' \
+            .github/workflows/apply-autonomy-hardening.yml \
+            | sed 's/^          //' > /tmp/apply-autonomy-hardening.py
+          python3 /tmp/apply-autonomy-hardening.py > /tmp/autonomy-hardening-diagnostic.txt 2>&1
+          status=$?
+          mkdir -p diagnostics
+          cp /tmp/autonomy-hardening-diagnostic.txt diagnostics/autonomy-hardening.txt
+          printf '\nexit_status=%s\nscript_lines=%s\n' "$status" "$(wc -l < /tmp/apply-autonomy-hardening.py)" >> diagnostics/autonomy-hardening.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add diagnostics/autonomy-hardening.txt
+          git commit -m "Record autonomy hardening diagnostics"
+          git push origin HEAD:fix/autonomy-hardening
+          exit "$status"
