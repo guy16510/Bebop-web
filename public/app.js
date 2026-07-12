@@ -2,6 +2,16 @@ const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}:/
 const keys = new Set();
 const heldControls = new Set();
 const flightKeys = new Set(['w', 's', 'a', 'd', 'q', 'e', 'r', 'f']);
+const controlKeyMap = new Map([
+  ['forward', 'w'],
+  ['backward', 's'],
+  ['left', 'a'],
+  ['right', 'd'],
+  ['yaw-left', 'q'],
+  ['yaw-right', 'e'],
+  ['up', 'r'],
+  ['down', 'f'],
+]);
 const pendingControls = new Map();
 const pendingPings = new Map();
 const commandLatencies = [];
@@ -17,6 +27,7 @@ let lastCommandRtt = null;
 let lastStopRtt = null;
 let lastServerApplyMs = null;
 let latencyTestRemaining = 0;
+let commandAmount = 20;
 
 const $ = (id) => document.getElementById(id);
 const send = (message) => {
@@ -43,6 +54,7 @@ socket.addEventListener('message', (event) => {
   if (message.type === 'pilot.ack') handlePilotAck(message);
   if (message.type === 'pilot.granted') {
     pilot = true;
+    clearControlState();
     $('pilot-status').textContent = 'Controls acquired';
     $('message').textContent = '';
     updateControlAvailability();
@@ -63,7 +75,10 @@ socket.addEventListener('message', (event) => {
     updateControlAvailability();
     renderSafety();
   }
-  if (message.type === 'error') $('message').textContent = message.message;
+  if (message.type === 'error') {
+    $('message').textContent = message.message;
+    updateControlAvailability();
+  }
 });
 
 socket.addEventListener('open', () => {
@@ -85,11 +100,14 @@ function render() {
   if (!lastState) return;
   const telemetry = lastState.telemetry;
   $('connection').textContent = lastState.connectionState;
+  $('connection').classList.toggle('state-connected', lastState.connectionState === 'connected');
+  $('connection').classList.toggle('state-disconnected', lastState.connectionState !== 'connected');
   $('battery').textContent = `${telemetry.battery.toFixed(0)}%`;
   renderSignal(telemetry.signalRssi);
   $('altitude').textContent = `${telemetry.altitude.toFixed(2)} m`;
   $('flight-state').textContent = telemetry.flyingState;
   $('telemetry-age').textContent = `${Date.now() - telemetry.updatedAt} ms`;
+  updateControlAvailability();
 }
 
 function renderSignal(rssi) {
@@ -102,11 +120,15 @@ function renderSignal(rssi) {
 }
 
 function renderSafety() {
-  if (!safetyStatus) return;
+  if (!safetyStatus) {
+    updateControlAvailability();
+    return;
+  }
   $('armed').textContent = safetyStatus.armed ? 'Yes' : 'No';
   $('controls-allowed').textContent = safetyStatus.controlAllowed ? 'Yes' : 'No';
   $('takeoff-allowed').textContent = safetyStatus.takeoffAllowed ? 'Yes' : 'No';
-  $('takeoff-button').disabled = !pilot || !safetyStatus.takeoffAllowed;
+
+  if (!safetyStatus.controlAllowed && (keys.size > 0 || heldControls.size > 0)) requestStop();
 
   if (safetyStatus.armedUntil) {
     const remaining = Math.max(0, safetyStatus.armedUntil - Date.now());
@@ -121,10 +143,14 @@ function renderSafety() {
     item.textContent = warning;
     return item;
   }));
+  updateControlAvailability();
 }
 
 function renderVideo() {
-  if (!videoHealth) return;
+  if (!videoHealth) {
+    updateControlAvailability();
+    return;
+  }
   $('video-state').textContent = videoHealth.state;
   $('video-fps').textContent = `${videoHealth.fps.toFixed(1)} fps`;
   $('video-drops').textContent = `${videoHealth.droppedFrames} dropped`;
@@ -143,22 +169,23 @@ function renderVideo() {
   }
 
   if (videoHealth.lastError) $('message').textContent = videoHealth.lastError;
+  updateControlAvailability();
 }
 
 function commandFromControls() {
-  const amount = 30;
   const command = {
-    pitch: ((keys.has('w') || heldControls.has('forward')) ? amount : 0)
-      + ((keys.has('s') || heldControls.has('backward')) ? -amount : 0),
-    roll: ((keys.has('d') || heldControls.has('right')) ? amount : 0)
-      + ((keys.has('a') || heldControls.has('left')) ? -amount : 0),
-    yaw: ((keys.has('e') || heldControls.has('yaw-right')) ? amount : 0)
-      + ((keys.has('q') || heldControls.has('yaw-left')) ? -amount : 0),
-    gaz: ((keys.has('r') || heldControls.has('up')) ? amount : 0)
-      + ((keys.has('f') || heldControls.has('down')) ? -amount : 0),
-    active: keys.size > 0 || heldControls.size > 0,
+    pitch: ((keys.has('w') || heldControls.has('forward')) ? commandAmount : 0)
+      + ((keys.has('s') || heldControls.has('backward')) ? -commandAmount : 0),
+    roll: ((keys.has('d') || heldControls.has('right')) ? commandAmount : 0)
+      + ((keys.has('a') || heldControls.has('left')) ? -commandAmount : 0),
+    yaw: ((keys.has('e') || heldControls.has('yaw-right')) ? commandAmount : 0)
+      + ((keys.has('q') || heldControls.has('yaw-left')) ? -commandAmount : 0),
+    gaz: ((keys.has('r') || heldControls.has('up')) ? commandAmount : 0)
+      + ((keys.has('f') || heldControls.has('down')) ? -commandAmount : 0),
   };
+  command.active = command.roll !== 0 || command.pitch !== 0 || command.yaw !== 0 || command.gaz !== 0;
   $('command').textContent = formatCommand(command);
+  renderActiveControls();
   return command;
 }
 
@@ -166,10 +193,29 @@ function formatCommand(command) {
   return `roll ${command.roll}  pitch ${command.pitch}  yaw ${command.yaw}  gaz ${command.gaz}`;
 }
 
+function renderActiveControls() {
+  document.querySelectorAll('[data-control]').forEach((button) => {
+    const control = button.dataset.control;
+    const key = controlKeyMap.get(control);
+    const active = control !== 'stop' && (heldControls.has(control) || (key && keys.has(key)));
+    button.classList.toggle('is-active', Boolean(active));
+    if (control !== 'stop') button.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+  const strength = $('control-strength');
+  if (strength) strength.disabled = keys.size > 0 || heldControls.size > 0;
+}
+
 function clearControlState() {
   keys.clear();
   heldControls.clear();
   commandFromControls();
+}
+
+function sendTracked(message, sequence) {
+  pendingControls.set(sequence, performance.now());
+  if (send(message)) return true;
+  pendingControls.delete(sequence);
+  return false;
 }
 
 function sendCurrentCommand(track = false) {
@@ -181,16 +227,14 @@ function sendCurrentCommand(track = false) {
   }
 
   const sequence = ++controlSequence;
-  pendingControls.set(sequence, performance.now());
-  send({ type: 'pilot.command', sequence, command });
+  sendTracked({ type: 'pilot.command', sequence, command }, sequence);
 }
 
 function requestStop() {
   clearControlState();
   if (!pilot) return;
   const sequence = ++controlSequence;
-  pendingControls.set(sequence, performance.now());
-  send({ type: 'pilot.stop', sequence });
+  sendTracked({ type: 'pilot.stop', sequence }, sequence);
 }
 
 function sendPing(isTest = false) {
@@ -212,6 +256,7 @@ function handlePong(message) {
       : `${latencyTestRemaining} samples remaining`;
   }
   updateDiagnostics();
+  updateControlAvailability();
 }
 
 function handlePilotAck(message) {
@@ -226,6 +271,7 @@ function handlePilotAck(message) {
 
   lastServerApplyMs = Math.max(0, message.serverAppliedAt - message.serverReceivedAt);
   $('server-command').textContent = `${message.accepted ? 'accepted' : 'blocked'}: ${formatCommand(message.command)}`;
+  if (!message.accepted) $('message').textContent = 'Command blocked by the safety controller';
   updateDiagnostics();
 }
 
@@ -253,25 +299,84 @@ function updateDiagnostics() {
   $('server-apply').textContent = displayMs(lastServerApplyMs);
 }
 
-function updateControlAvailability() {
-  document.querySelectorAll('[data-control]').forEach((button) => {
-    button.disabled = !pilot;
+function setActionDisabled(actionName, disabled) {
+  document.querySelectorAll(`[data-action="${actionName}"]`).forEach((button) => {
+    button.disabled = disabled;
   });
-  const armButton = document.querySelector('[data-action="arm"]');
-  if (armButton) armButton.disabled = !pilot;
-  if (safetyStatus) $('takeoff-button').disabled = !pilot || !safetyStatus.takeoffAllowed;
+}
+
+function setControlAvailabilityStatus(socketOpen, connected, movementAllowed) {
+  const status = $('control-availability');
+  if (!status) return;
+  status.classList.remove('status-ready', 'status-warning', 'status-blocked');
+
+  if (!socketOpen) {
+    status.textContent = 'Control link unavailable';
+    status.classList.add('status-blocked');
+  } else if (!pilot) {
+    status.textContent = 'Acquire controls to enable movement';
+    status.classList.add('status-warning');
+  } else if (!connected) {
+    status.textContent = 'Controls owned, connect the drone';
+    status.classList.add('status-warning');
+  } else if (!movementAllowed) {
+    status.textContent = 'Movement locked by telemetry or safety state';
+    status.classList.add('status-blocked');
+  } else {
+    status.textContent = 'Movement controls ready';
+    status.classList.add('status-ready');
+  }
+}
+
+function updateControlAvailability() {
+  const socketOpen = socket.readyState === WebSocket.OPEN;
+  const connectionState = lastState?.connectionState ?? 'disconnected';
+  const connected = connectionState === 'connected';
+  const flyingState = lastState?.telemetry?.flyingState;
+  const movementAllowed = socketOpen && pilot && Boolean(safetyStatus?.controlAllowed);
+  const videoState = videoHealth?.state ?? 'disabled';
+
+  document.querySelectorAll('[data-control]').forEach((button) => {
+    const isStop = button.dataset.control === 'stop';
+    button.disabled = isStop ? !(socketOpen && pilot) : !movementAllowed;
+  });
+
+  setActionDisabled('connect', !socketOpen || ['connected', 'connecting'].includes(connectionState));
+  setActionDisabled('disconnect', !socketOpen || connectionState === 'disconnected');
+  setActionDisabled('acquire', !socketOpen || pilot);
+  setActionDisabled('release', !socketOpen || !pilot);
+  setActionDisabled(
+    'arm',
+    !socketOpen
+      || !pilot
+      || !connected
+      || !safetyStatus?.telemetryFresh
+      || safetyStatus?.armed
+      || flyingState !== 'landed',
+  );
+  setActionDisabled('disarm', !socketOpen || !safetyStatus?.armed);
+  setActionDisabled('takeoff', !socketOpen || !pilot || !safetyStatus?.takeoffAllowed);
+  setActionDisabled('land', !socketOpen || !connected || ['landed', 'landing'].includes(flyingState));
+  setActionDisabled('emergency', !socketOpen || !connected);
+  setActionDisabled('video-start', !socketOpen || !connected || ['starting', 'running'].includes(videoState));
+  setActionDisabled('video-stop', !socketOpen || videoState === 'disabled');
+
+  const latencyButton = $('run-latency-test');
+  if (latencyButton) latencyButton.disabled = !socketOpen || latencyTestRemaining > 0;
+  setControlAvailabilityStatus(socketOpen, connected, movementAllowed);
+  renderActiveControls();
 }
 
 addEventListener('keydown', (event) => {
-  if (event.target instanceof Element && event.target.matches('input, textarea, button')) return;
-  if (event.code === 'Space') {
+  if (event.code === 'Space' || event.key === 'Escape') {
     event.preventDefault();
     requestStop();
     return;
   }
+  if (event.target instanceof Element && event.target.matches('input, textarea, button, select')) return;
 
   const key = event.key.toLowerCase();
-  if (!flightKeys.has(key)) return;
+  if (!flightKeys.has(key) || !pilot || !safetyStatus?.controlAllowed) return;
   event.preventDefault();
   if (keys.has(key)) return;
   keys.add(key);
@@ -281,7 +386,7 @@ addEventListener('keydown', (event) => {
 addEventListener('keyup', (event) => {
   const key = event.key.toLowerCase();
   if (!flightKeys.has(key)) return;
-  keys.delete(key);
+  if (!keys.delete(key)) return;
   sendCurrentCommand(true);
 });
 addEventListener('blur', requestStop);
@@ -316,6 +421,16 @@ document.querySelectorAll('[data-control]').forEach((button) => {
   button.addEventListener('lostpointercapture', release);
 });
 
+const strengthInput = $('control-strength');
+const strengthOutput = $('control-strength-value');
+function updateStrength() {
+  commandAmount = Math.max(5, Math.min(35, Number(strengthInput?.value ?? 20)));
+  if (strengthInput) strengthInput.value = String(commandAmount);
+  if (strengthOutput) strengthOutput.textContent = `${commandAmount}%`;
+}
+if (strengthInput) strengthInput.addEventListener('input', updateStrength);
+updateStrength();
+
 setInterval(() => {
   if (pilot) sendCurrentCommand(false);
   render();
@@ -329,6 +444,7 @@ $('run-latency-test').addEventListener('click', () => {
   pendingPings.clear();
   latencyTestRemaining = 20;
   $('latency-test-status').textContent = '20 samples remaining';
+  updateControlAvailability();
   for (let index = 0; index < 20; index += 1) {
     setTimeout(() => sendPing(true), index * 75);
   }
@@ -338,12 +454,13 @@ document.querySelectorAll('[data-action]').forEach((button) => {
   button.addEventListener('click', () => {
     $('message').textContent = '';
     const actionName = button.dataset.action;
-    if (['disconnect', 'disarm', 'land', 'emergency'].includes(actionName)) clearControlState();
+    if (['disconnect', 'release', 'disarm', 'land', 'emergency'].includes(actionName)) clearControlState();
 
     const actions = {
       connect: { type: 'drone.connect' },
       disconnect: { type: 'drone.disconnect' },
       acquire: { type: 'pilot.acquire' },
+      release: { type: 'pilot.release' },
       arm: { type: 'drone.arm' },
       disarm: { type: 'drone.disarm' },
       takeoff: { type: 'drone.takeoff' },
@@ -353,7 +470,7 @@ document.querySelectorAll('[data-action]').forEach((button) => {
       'video-stop': { type: 'video.stop' },
     };
     const action = actions[actionName];
-    if (action) send(action);
+    if (action && send(action)) $('message').textContent = `${button.textContent.trim()} requested`;
   });
 });
 
