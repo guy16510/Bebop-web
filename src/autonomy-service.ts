@@ -18,9 +18,16 @@ import {
 } from './autonomy.js';
 import { LandingVisionManager, type LandingVisionHealth } from './landing-vision.js';
 import {
+  filterFreshDetections,
+  pilotAckTimedOut,
+  shouldRetryLanding,
+  updateIsFresh,
+} from './autonomy-hardening.js';
+import {
   NavigationMapManager,
   applyObstacleAvoidance,
   gpsGuidance,
+  gpsOffsetMeters,
   landingGuidance,
   landingPadDetection,
   rangeFieldFresh,
@@ -76,6 +83,10 @@ const defaults = normalizeAutonomySettings({
   minimumSignalRssi: envNumber('AUTONOMY_MINIMUM_SIGNAL_RSSI', DEFAULT_AUTONOMY_SETTINGS.minimumSignalRssi),
   targetAltitudeMeters: envNumber('AUTONOMY_TARGET_ALTITUDE_METERS', DEFAULT_AUTONOMY_SETTINGS.targetAltitudeMeters),
   maximumAltitudeMeters: envNumber('AUTONOMY_MAXIMUM_ALTITUDE_METERS', DEFAULT_AUTONOMY_SETTINGS.maximumAltitudeMeters),
+  maximumHorizontalDistanceMeters: envNumber(
+    'AUTONOMY_MAXIMUM_HORIZONTAL_DISTANCE_METERS',
+    DEFAULT_AUTONOMY_SETTINGS.maximumHorizontalDistanceMeters,
+  ),
   maximumFlightSeconds: envNumber('AUTONOMY_MAXIMUM_FLIGHT_SECONDS', DEFAULT_AUTONOMY_SETTINGS.maximumFlightSeconds),
   telemetryTimeoutMs: envNumber('AUTONOMY_TELEMETRY_TIMEOUT_MS', DEFAULT_AUTONOMY_SETTINGS.telemetryTimeoutMs),
   commandPercent: envNumber('AUTONOMY_COMMAND_PERCENT', DEFAULT_AUTONOMY_SETTINGS.commandPercent),
@@ -95,11 +106,13 @@ const defaults = normalizeAutonomySettings({
 interface PerceptionHealth {
   state: 'disabled' | 'stopped' | 'starting' | 'running' | 'fault';
   trackingState: 'disabled' | 'initializing' | 'tracking' | 'lost' | 'fault';
+  lastUpdateAt: number | null;
   lastError: string | null;
 }
 
 interface VideoHealth {
   state: 'disabled' | 'starting' | 'running' | 'fault';
+  lastFrameAt?: number | null;
   lastError?: string | null;
 }
 
@@ -179,7 +192,17 @@ let rangeField: RangeField | null = null;
 let guidanceReason: string | null = null;
 let guidanceDistanceMeters: number | null = null;
 let finalStageAfterLanding: 'completed' | 'aborted' | 'fault' = 'completed';
+let pilotSequence = 0;
+let lastPilotAckAt: number | null = null;
+let lastLandRequestAt = 0;
+let homePosition: { latitude: number; longitude: number } | null = null;
+let geofenceViolationSince: number | null = null;
 let shuttingDown = false;
+
+const commandAckTimeoutMs = envNumber('AUTONOMY_COMMAND_ACK_TIMEOUT_MS', 750);
+const pipelineFreshnessMs = envNumber('AUTONOMY_PIPELINE_FRESHNESS_MS', 2_000);
+const detectionFreshnessMs = envNumber('AUTONOMY_DETECTION_FRESHNESS_MS', 1_000);
+const landingRetryMs = envNumber('AUTONOMY_LANDING_RETRY_MS', 500);
 
 function isMissionActive(): boolean {
   return [
@@ -253,9 +276,14 @@ function syntheticLandingDetection(pad: LandingPadDefinition | null, now = Date.
 
 function combinedDetections(now = Date.now()): ObjectDetection[] {
   const byId = new Map<string, ObjectDetection>();
-  for (const detection of perceptionSnapshot?.detections ?? []) byId.set(detection.id, detection);
-  for (const detection of landingVision.getSnapshot().detections) byId.set(detection.id, detection);
-  for (const detection of syntheticLandingDetection(targetPad(), now)) byId.set(detection.id, detection);
+  const candidates = [
+    ...(perceptionSnapshot?.detections ?? []),
+    ...landingVision.getSnapshot().detections,
+    ...syntheticLandingDetection(targetPad(), now),
+  ];
+  for (const detection of filterFreshDetections(candidates, now, detectionFreshnessMs)) {
+    byId.set(detection.id, detection);
+  }
   return [...byId.values()];
 }
 
@@ -310,6 +338,20 @@ function navigationReadiness(settings: AutonomySettings, now = Date.now()): Auto
         ? `${drone?.telemetry.satellites ?? '?'} satellites, heading available`
         : 'Pad-transfer requires a current GPS fix and yaw telemetry',
     });
+    const targetDistance = gpsReady && pad?.gps && drone
+      ? gpsOffsetMeters(
+        { latitude: drone.telemetry.latitude as number, longitude: drone.telemetry.longitude as number },
+        pad.gps,
+      ).distance
+      : null;
+    checks.push({
+      key: 'mission-geofence',
+      label: 'Mission geofence',
+      ok: targetDistance === null || targetDistance <= settings.maximumHorizontalDistanceMeters,
+      detail: targetDistance === null
+        ? 'Waiting for GPS coordinates'
+        : `${targetDistance.toFixed(1)} m to target, maximum ${settings.maximumHorizontalDistanceMeters.toFixed(1)} m`,
+    });
   }
 
   if (metricRangeRequired && (needsGpsTransfer || settings.requireLandingMarker)) {
@@ -329,8 +371,10 @@ function navigationReadiness(settings: AutonomySettings, now = Date.now()): Auto
     checks.push({
       key: 'landing-vision',
       label: 'AprilTag landing vision',
-      ok: vision.state === 'running',
-      detail: vision.state === 'running' ? 'AprilTag detector is receiving frames' : vision.lastError ?? vision.state,
+      ok: vision.state === 'running' && updateIsFresh(vision.lastUpdateAt, now, pipelineFreshnessMs),
+      detail: vision.state === 'running' && updateIsFresh(vision.lastUpdateAt, now, pipelineFreshnessMs)
+        ? 'AprilTag detector is receiving fresh frames'
+        : vision.lastError ?? 'AprilTag detector frames are stale',
     });
   }
 
@@ -428,7 +472,9 @@ function sendControl(message: unknown): boolean {
 }
 
 function stopMovement(): void {
-  if (lastCommandActive && pilotOwned) sendControl({ type: 'pilot.stop' });
+  if (lastCommandActive && pilotOwned) {
+    sendControl({ type: 'pilot.stop', sequence: ++pilotSequence });
+  }
   lastCommandActive = false;
 }
 
@@ -439,7 +485,14 @@ function sendCommand(command: PilotingCommand): void {
     return;
   }
   lastCommandActive = true;
-  sendControl({ type: 'pilot.command', command });
+  if (!sendControl({ type: 'pilot.command', sequence: ++pilotSequence, command })) {
+    beginLanding('Control link unavailable while sending autonomous movement', 'fault');
+  }
+}
+
+function requestLanding(now = Date.now()): boolean {
+  lastLandRequestAt = now;
+  return sendControl({ type: 'drone.land' });
 }
 
 function releasePilot(): void {
@@ -458,6 +511,9 @@ function resetMissionTerminal(next: 'completed' | 'aborted' | 'fault'): void {
   releasePilot();
   completedAt = Date.now();
   deadlineAt = null;
+  homePosition = null;
+  geofenceViolationSince = null;
+  lastPilotAckAt = null;
   transition(next);
 }
 
@@ -476,7 +532,7 @@ function beginLanding(reason: string | null, finalStage: 'completed' | 'aborted'
   }
 
   transition('landing');
-  if (!sendControl({ type: 'drone.land' })) {
+  if (!requestLanding()) {
     lastError = 'Control link unavailable while requesting landing';
     finalStageAfterLanding = 'fault';
     broadcastStatus();
@@ -537,6 +593,13 @@ function startMission(confirmation?: string): MissionStatus {
   finalStageAfterLanding = 'completed';
   guidanceReason = null;
   guidanceDistanceMeters = null;
+  lastPilotAckAt = startedAt;
+  geofenceViolationSince = null;
+  homePosition = drone?.telemetry.gpsFix === true
+    && typeof drone.telemetry.latitude === 'number'
+    && typeof drone.telemetry.longitude === 'number'
+    ? { latitude: drone.telemetry.latitude, longitude: drone.telemetry.longitude }
+    : null;
   transition('preflight');
   transition('acquiring-controls');
   if (!sendControl({ type: 'pilot.acquire' })) throw new Error('Control link is not open');
@@ -557,8 +620,14 @@ function handleControlMessage(raw: WebSocket.RawData): void {
   else if (message.type === 'perception.status') {
     perception = message.health as PerceptionHealth;
     if (message.snapshot) perceptionSnapshot = message.snapshot as PerceptionSnapshot;
+  } else if (message.type === 'pilot.ack') {
+    lastPilotAckAt = Date.now();
+    if (message.accepted === false && isMissionActive()) {
+      beginLanding('Autonomous movement command was rejected by the safety controller', 'fault');
+    }
   } else if (message.type === 'pilot.granted') {
     pilotOwned = true;
+    lastPilotAckAt = Date.now();
     if (stage === 'acquiring-controls') {
       transition('arming');
       sendControl({ type: 'drone.arm' });
@@ -620,7 +689,7 @@ function connectControl(): void {
   socket.on('open', () => {
     log.info({ controlUrl }, 'Autonomy connected to Bebop Web control server');
     void refreshMode().finally(() => broadcastStatus());
-    if (stage === 'landing' && isAirborne(drone)) sendControl({ type: 'drone.land' });
+    if (stage === 'landing' && isAirborne(drone)) requestLanding();
   });
   socket.on('message', handleControlMessage);
   socket.on('close', () => {
@@ -651,6 +720,7 @@ const settingsPatchSchema = z.object({
   minimumSignalRssi: z.number().optional(),
   targetAltitudeMeters: z.number().optional(),
   maximumAltitudeMeters: z.number().optional(),
+  maximumHorizontalDistanceMeters: z.number().optional(),
   maximumFlightSeconds: z.number().optional(),
   telemetryTimeoutMs: z.number().optional(),
   commandPercent: z.number().optional(),
@@ -895,6 +965,15 @@ setInterval(() => {
 
     const telemetryAge = drone ? now - drone.telemetry.updatedAt : Number.POSITIVE_INFINITY;
     if (telemetryAge > settings.telemetryTimeoutMs) beginLanding('Telemetry became stale', 'fault');
+    if (pilotAckTimedOut(lastCommandActive, lastPilotAckAt, now, commandAckTimeoutMs)) {
+      beginLanding('Autonomous movement acknowledgements stopped', 'fault');
+    }
+    if (settings.requireVideo && (
+      video?.state !== 'running'
+      || !updateIsFresh(video?.lastFrameAt, now, pipelineFreshnessMs)
+    )) {
+      beginLanding('Video frames became stale', 'fault');
+    }
     if (drone && drone.telemetry.battery <= settings.reserveBatteryPercent) {
       beginLanding(`Battery reached ${drone.telemetry.battery.toFixed(0)}% reserve`, 'aborted');
     }
@@ -910,13 +989,36 @@ setInterval(() => {
       lowSignalSince = null;
     }
 
-    const perceptionHealthy = perception?.state === 'running' && perception.trackingState === 'tracking';
+    const perceptionHealthy = perception?.state === 'running'
+      && perception.trackingState === 'tracking'
+      && updateIsFresh(perception.lastUpdateAt, now, pipelineFreshnessMs);
     if (settings.requirePerceptionTracking && !perceptionHealthy) {
       perceptionLostSince ??= now;
       if (now - perceptionLostSince >= 2_000) beginLanding('SLAM tracking was lost', 'aborted');
     } else {
       perceptionLostSince = null;
     }
+
+    if (homePosition && drone?.telemetry.gpsFix === true
+      && typeof drone.telemetry.latitude === 'number'
+      && typeof drone.telemetry.longitude === 'number') {
+      const distanceFromHome = gpsOffsetMeters(homePosition, {
+        latitude: drone.telemetry.latitude,
+        longitude: drone.telemetry.longitude,
+      }).distance;
+      if (distanceFromHome > settings.maximumHorizontalDistanceMeters) {
+        geofenceViolationSince ??= now;
+        if (now - geofenceViolationSince >= 1_000) {
+          beginLanding(`Mission geofence exceeded at ${distanceFromHome.toFixed(1)} m`, 'fault');
+        }
+      } else {
+        geofenceViolationSince = null;
+      }
+    }
+  }
+
+  if (stage === 'landing' && shouldRetryLanding(isAirborne(drone), lastLandRequestAt, now, landingRetryMs)) {
+    requestLanding(now);
   }
 
   const stageElapsedMs = now - stageStartedAt;

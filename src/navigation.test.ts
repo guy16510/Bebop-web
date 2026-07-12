@@ -7,6 +7,7 @@ import {
   gpsOffsetMeters,
   landingGuidance,
   markerIdFromDetection,
+  rangeFieldFresh,
   resolveSemanticObservations,
   type LandingPadDefinition,
   type RangeField,
@@ -109,6 +110,31 @@ describe('obstacle avoidance', () => {
     expect(result.blocked).toBe(false);
     expect(result.command.pitch).toBeGreaterThan(0);
     expect(result.command.pitch).toBeLessThan(10);
+  });
+
+  it('blocks when the required movement sectors are missing', () => {
+    const result = applyObstacleAvoidance(
+      { roll: 0, pitch: 10, yaw: 0, gaz: 0, active: true },
+      {
+        source: 'rear-only',
+        observedAt: 1_000,
+        receivedAt: 1_000,
+        sectors: { rear: { distanceMeters: 5, confidence: 1 } },
+      },
+      DEFAULT_NAVIGATION_SETTINGS,
+      1_000,
+    );
+    expect(result.blocked).toBe(true);
+    expect(result.command.active).toBe(false);
+  });
+
+  it('rejects range timestamps too far in the future', () => {
+    expect(rangeFieldFresh({
+      source: 'future',
+      observedAt: 2_000,
+      receivedAt: 1_000,
+      sectors: { front: { distanceMeters: 5, confidence: 1 } },
+    }, DEFAULT_NAVIGATION_SETTINGS, 1_000)).toBe(false);
   });
 
   it('blocks movement when required range data is stale', () => {
