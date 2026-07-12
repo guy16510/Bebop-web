@@ -1,0 +1,46 @@
+%YAML:1.0
+
+# Bootstrap calibration for immediate mapping with a Parrot Bebop 2.
+# Source measurements: AutonomyLab/bebop_autonomy bebop2_camera_calib.yaml
+# at 856x480. Intrinsics are scaled exactly by 0.5 for the 428x240 MJPEG
+# stream configured in .env.bebop.example. Distortion coefficients are
+# unchanged under uniform image scaling.
+#
+# This is a measured model for the Bebop 2 camera family, but not a
+# unit-specific calibration. Run scripts/calibrate-bebop-camera.py later if
+# you need the best drift and reprojection accuracy for this exact drone.
+
+File.version: "1.0"
+Camera.type: "PinHole"
+
+Camera1.fx: 268.646439
+Camera1.fy: 263.500174
+Camera1.cx: 213.665927
+Camera1.cy: 120.113444
+Camera1.k1: 0.004974
+Camera1.k2: -0.000130
+Camera1.p1: -0.001212
+Camera1.p2: 0.002192
+Camera1.k3: 0.000000
+
+Camera.width: 428
+Camera.height: 240
+Camera.fps: 30.0
+Camera.RGB: 0
+
+ORBextractor.nFeatures: 1600
+ORBextractor.scaleFactor: 1.2
+ORBextractor.nLevels: 8
+ORBextractor.iniThFAST: 15
+ORBextractor.minThFAST: 5
+
+Viewer.KeyFrameSize: 0.05
+Viewer.KeyFrameLineWidth: 1.0
+Viewer.GraphLineWidth: 0.9
+Viewer.PointSize: 2.0
+Viewer.CameraSize: 0.08
+Viewer.CameraLineWidth: 3.0
+Viewer.ViewpointX: 0.0
+Viewer.ViewpointY: -0.7
+Viewer.ViewpointZ: -3.5
+Viewer.ViewpointF: 500.0
