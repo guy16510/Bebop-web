@@ -4,7 +4,7 @@ import type { SafetyStatus } from './safety.js';
 import type { DroneSnapshot, PilotingCommand } from './types.js';
 import { ZERO_COMMAND } from './types.js';
 
-export type AutonomyPattern = 'hover' | 'yaw-scan';
+export type AutonomyPattern = 'hover' | 'yaw-scan' | 'pad-transfer';
 export type AutonomyStage =
   | 'disabled'
   | 'idle'
@@ -14,6 +14,9 @@ export type AutonomyStage =
   | 'taking-off'
   | 'climbing'
   | 'executing'
+  | 'navigating'
+  | 'searching-landing-pad'
+  | 'aligning-landing-pad'
   | 'landing'
   | 'completed'
   | 'aborted'
@@ -35,6 +38,11 @@ export interface AutonomySettings {
   pattern: AutonomyPattern;
   hoverSeconds: number;
   yawScanSeconds: number;
+  takeoffPadId: string;
+  landingPadId: string;
+  requireLandingMarker: boolean;
+  navigationTimeoutSeconds: number;
+  landingSearchSeconds: number;
 }
 
 export interface AutonomySettingsStatus {
@@ -78,6 +86,11 @@ export const DEFAULT_AUTONOMY_SETTINGS: AutonomySettings = {
   pattern: 'yaw-scan',
   hoverSeconds: 10,
   yawScanSeconds: 12,
+  takeoffPadId: '',
+  landingPadId: '',
+  requireLandingMarker: false,
+  navigationTimeoutSeconds: 90,
+  landingSearchSeconds: 20,
 };
 
 const AUTONOMY_KEYS = Object.keys(DEFAULT_AUTONOMY_SETTINGS) as Array<keyof AutonomySettings>;
@@ -87,12 +100,19 @@ function finiteNumber(value: unknown, fallback: number, minimum: number, maximum
   return Math.max(minimum, Math.min(maximum, value));
 }
 
+function cleanPadId(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback;
+  return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+}
+
 export function normalizeAutonomySettings(
   value: unknown,
   defaults: AutonomySettings = DEFAULT_AUTONOMY_SETTINGS,
 ): AutonomySettings {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-  const pattern: AutonomyPattern = source.pattern === 'hover' || source.pattern === 'yaw-scan'
+  const pattern: AutonomyPattern = source.pattern === 'hover'
+    || source.pattern === 'yaw-scan'
+    || source.pattern === 'pad-transfer'
     ? source.pattern
     : defaults.pattern;
   const maximumAltitudeMeters = finiteNumber(source.maximumAltitudeMeters, defaults.maximumAltitudeMeters, 0.5, 10);
@@ -130,6 +150,18 @@ export function normalizeAutonomySettings(
     pattern,
     hoverSeconds: finiteNumber(source.hoverSeconds, defaults.hoverSeconds, 2, 60),
     yawScanSeconds: finiteNumber(source.yawScanSeconds, defaults.yawScanSeconds, 2, 45),
+    takeoffPadId: cleanPadId(source.takeoffPadId, defaults.takeoffPadId),
+    landingPadId: cleanPadId(source.landingPadId, defaults.landingPadId),
+    requireLandingMarker: typeof source.requireLandingMarker === 'boolean'
+      ? source.requireLandingMarker
+      : defaults.requireLandingMarker,
+    navigationTimeoutSeconds: finiteNumber(
+      source.navigationTimeoutSeconds,
+      defaults.navigationTimeoutSeconds,
+      10,
+      600,
+    ),
+    landingSearchSeconds: finiteNumber(source.landingSearchSeconds, defaults.landingSearchSeconds, 5, 120),
   };
 }
 

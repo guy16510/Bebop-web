@@ -18,15 +18,60 @@ jobs:
         with:
           node-version: 22
       - run: npm install
-      - run: npm run typecheck
+      - name: Run typecheck
+        id: typecheck
+        continue-on-error: true
+        run: npm run typecheck > typecheck.log 2>&1
+      - name: Upload typecheck diagnostics
+        if: steps.typecheck.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: typecheck-diagnostics
+          path: typecheck.log
+          retention-days: 2
+      - name: Fail on typecheck errors
+        if: steps.typecheck.outcome == 'failure'
+        run: |
+          cat typecheck.log
+          exit 1
       - run: npm run check:client
-      - run: npm test
+      - name: Run unit tests
+        id: unit_tests
+        continue-on-error: true
+        run: npm test > unit-tests.log 2>&1
+      - name: Upload unit-test diagnostics
+        if: steps.unit_tests.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-diagnostics
+          path: unit-tests.log
+          retention-days: 2
+      - name: Fail on unit-test errors
+        if: steps.unit_tests.outcome == 'failure'
+        run: |
+          cat unit-tests.log
+          exit 1
       - run: npm run build
-      - run: node scripts/autonomy-smoke.mjs
+      - name: Run autonomy smoke
+        id: autonomy_smoke
+        continue-on-error: true
+        run: node scripts/autonomy-smoke.mjs > autonomy-smoke.log 2>&1
+      - name: Upload autonomy-smoke diagnostics
+        if: steps.autonomy_smoke.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: autonomy-smoke-diagnostics
+          path: autonomy-smoke.log
+          retention-days: 2
+      - name: Fail on autonomy-smoke errors
+        if: steps.autonomy_smoke.outcome == 'failure'
+        run: |
+          cat autonomy-smoke.log
+          exit 1
       - run: node scripts/perception-smoke.mjs
       - run: node scripts/perception-server-smoke.mjs
-      - name: Validate calibration script syntax
-        run: python3 -m py_compile scripts/calibrate-bebop-camera.py
+      - name: Validate calibration and AprilTag script syntax
+        run: python3 -m py_compile scripts/calibrate-bebop-camera.py perception-sidecar/scripts/apriltag_stream.py
 
   perception-sidecar:
     runs-on: ubuntu-latest
@@ -43,10 +88,15 @@ jobs:
           tags: bebop-perception-sidecar:ci
           cache-from: type=gha,scope=bebop-perception-sidecar
           cache-to: type=gha,mode=max,scope=bebop-perception-sidecar
-      - name: Execute engines and production Bebop replay path
+      - name: Execute engines, AprilTag detector, and production Bebop replay path
         run: |
           mkdir -p /tmp/perception-replay
           docker run --rm bebop-perception-sidecar:ci --self-test > /tmp/sidecar-self-test.json
+          docker run --rm \
+            --entrypoint python3 \
+            bebop-perception-sidecar:ci \
+            /work/perception-sidecar/scripts/apriltag_stream.py --self-test \
+            > /tmp/apriltag-self-test.json
           docker run --rm \
             --entrypoint /usr/local/bin/bebop-perception-engine-self-test \
             -e ORB_SETTINGS=/config/bebop2-upstream-428x240.yaml \
@@ -78,6 +128,10 @@ jobs:
           assert snapshot['trackingState'] == 'tracking'
           assert snapshot['calibrated'] is True
           assert snapshot['map']['bounds']['minX'] < snapshot['map']['bounds']['maxX']
+
+          april = json.loads(Path('/tmp/apriltag-self-test.json').read_text())
+          assert april['ok'] is True
+          assert april['detections'][0]['id'] == 'apriltag-7'
 
           engines = json.loads(Path('/tmp/engine-self-test.json').read_text())
           assert engines['ok'] is True
@@ -119,6 +173,7 @@ jobs:
               'maxTrajectory': max(len(item['trajectory']) for item in replay),
               'maxTrackedFeatures': max(item['metrics']['trackedFeatures'] for item in replay),
               'yoloxOutputElements': engines['yolox']['outputElements'],
+              'aprilTag': april['detections'][0]['id'],
               'productionSnapshots': len(replay),
           }))
           PY

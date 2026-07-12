@@ -34,6 +34,16 @@ function normalizeFlyingState(value: string): FlyingState | null {
   return flyingStates.has(value as FlyingState) ? (value as FlyingState) : null;
 }
 
+function finite(value: unknown): number | null {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function objectNumber(value: unknown, key: string): number | null {
+  if (!value || typeof value !== 'object') return null;
+  return finite((value as Record<string, unknown>)[key]);
+}
+
 export class SimulatedDrone extends EventEmitter implements DroneAdapter {
   private snapshot: DroneSnapshot = {
     connectionState: 'disconnected',
@@ -46,6 +56,16 @@ export class SimulatedDrone extends EventEmitter implements DroneAdapter {
       speedX: 0,
       speedY: 0,
       speedZ: 0,
+      latitude: 42,
+      longitude: -71,
+      gpsAltitude: 50,
+      gpsFix: true,
+      satellites: 12,
+      roll: 0,
+      pitch: 0,
+      yaw: 0,
+      cameraTilt: 0,
+      cameraPan: 0,
       flyingState: 'landed',
       updatedAt: Date.now(),
     },
@@ -96,6 +116,12 @@ export class SimulatedDrone extends EventEmitter implements DroneAdapter {
     this.emitSnapshot();
   }
 
+  setCameraOrientation(tilt: number, pan: number): void {
+    this.snapshot.telemetry.cameraTilt = Math.max(-100, Math.min(100, tilt));
+    this.snapshot.telemetry.cameraPan = Math.max(-100, Math.min(100, pan));
+    this.emitSnapshot();
+  }
+
   setPilotingCommand(command: PilotingCommand): void {
     this.command = command;
   }
@@ -132,13 +158,28 @@ export class SimulatedDrone extends EventEmitter implements DroneAdapter {
     const airborne = !['landed', 'landing', 'emergency'].includes(telemetry.flyingState);
     if (airborne) {
       telemetry.flyingState = this.command.active ? 'flying' : 'hovering';
-      telemetry.speedX = this.command.pitch / 25;
-      telemetry.speedY = this.command.roll / 25;
+      const yaw = telemetry.yaw ?? 0;
+      const forwardMetersPerSecond = this.command.pitch / 25;
+      const rightMetersPerSecond = this.command.roll / 25;
+      telemetry.speedX = forwardMetersPerSecond;
+      telemetry.speedY = rightMetersPerSecond;
       telemetry.speedZ = this.command.gaz / 25;
+      telemetry.yaw = yaw + (this.command.yaw / 100) * 0.8 * 0.1;
+      telemetry.roll = this.command.roll / 100 * 0.25;
+      telemetry.pitch = this.command.pitch / 100 * 0.25;
       telemetry.altitude = Math.max(0.2, Math.min(10, telemetry.altitude + telemetry.speedZ * 0.1));
       telemetry.battery = Math.max(0, telemetry.battery - 0.01);
+
+      const north = forwardMetersPerSecond * Math.cos(yaw) - rightMetersPerSecond * Math.sin(yaw);
+      const east = forwardMetersPerSecond * Math.sin(yaw) + rightMetersPerSecond * Math.cos(yaw);
+      if (typeof telemetry.latitude === 'number' && typeof telemetry.longitude === 'number') {
+        telemetry.latitude += north * 0.1 / 111_132.92;
+        const longitudeScale = 111_412.84 * Math.cos(telemetry.latitude * Math.PI / 180);
+        telemetry.longitude += east * 0.1 / longitudeScale;
+      }
     } else {
       telemetry.speedX = telemetry.speedY = telemetry.speedZ = 0;
+      telemetry.roll = telemetry.pitch = 0;
     }
     telemetry.updatedAt = Date.now();
     this.emitSnapshot();
@@ -168,6 +209,18 @@ export class BebopDrone extends EventEmitter implements DroneAdapter {
 
   constructor(private readonly log: AdapterLogger) {
     super();
+    Object.assign(this.snapshot.telemetry, {
+      latitude: null,
+      longitude: null,
+      gpsAltitude: null,
+      gpsFix: false,
+      satellites: null,
+      roll: null,
+      pitch: null,
+      yaw: null,
+      cameraTilt: null,
+      cameraPan: null,
+    });
   }
 
   async connect(): Promise<void> {
@@ -211,6 +264,16 @@ export class BebopDrone extends EventEmitter implements DroneAdapter {
   async emergency(): Promise<void> {
     this.requireClient();
     this.client.emergency();
+  }
+
+  setCameraOrientation(tilt: number, pan: number): void {
+    this.requireClient();
+    const safeTilt = Math.max(-100, Math.min(100, Math.round(tilt)));
+    const safePan = Math.max(-100, Math.min(100, Math.round(pan)));
+    this.client.Camera?.orientation?.(safeTilt, safePan);
+    this.snapshot.telemetry.cameraTilt = safeTilt;
+    this.snapshot.telemetry.cameraPan = safePan;
+    this.emit('change', this.getSnapshot());
   }
 
   setPilotingCommand(command: PilotingCommand): void {
@@ -336,6 +399,50 @@ export class BebopDrone extends EventEmitter implements DroneAdapter {
     });
     this.client.on('altitude', (value: number) => {
       this.snapshot.telemetry.altitude = value;
+      update();
+    });
+    this.client.on('PositionChanged', (event: unknown) => {
+      const latitude = objectNumber(event, 'latitude');
+      const longitude = objectNumber(event, 'longitude');
+      const altitude = objectNumber(event, 'altitude');
+      if (latitude !== null && Math.abs(latitude) <= 90 && latitude !== 500) this.snapshot.telemetry.latitude = latitude;
+      if (longitude !== null && Math.abs(longitude) <= 180 && longitude !== 500) this.snapshot.telemetry.longitude = longitude;
+      if (altitude !== null && altitude !== 500) this.snapshot.telemetry.gpsAltitude = altitude;
+      update();
+    });
+    this.client.on('SpeedChanged', (event: unknown) => {
+      const speedX = objectNumber(event, 'speedX');
+      const speedY = objectNumber(event, 'speedY');
+      const speedZ = objectNumber(event, 'speedZ');
+      if (speedX !== null) this.snapshot.telemetry.speedX = speedX;
+      if (speedY !== null) this.snapshot.telemetry.speedY = speedY;
+      if (speedZ !== null) this.snapshot.telemetry.speedZ = speedZ;
+      update();
+    });
+    this.client.on('AttitudeChanged', (event: unknown) => {
+      const roll = objectNumber(event, 'roll');
+      const pitch = objectNumber(event, 'pitch');
+      const yaw = objectNumber(event, 'yaw');
+      if (roll !== null) this.snapshot.telemetry.roll = roll;
+      if (pitch !== null) this.snapshot.telemetry.pitch = pitch;
+      if (yaw !== null) this.snapshot.telemetry.yaw = yaw;
+      update();
+    });
+    this.client.on('GPSFixStateChanged', (event: unknown) => {
+      const fixed = objectNumber(event, 'fixed') ?? finite(event);
+      if (fixed !== null) this.snapshot.telemetry.gpsFix = fixed === 1;
+      update();
+    });
+    this.client.on('NumberOfSatelliteChanged', (event: unknown) => {
+      const satellites = objectNumber(event, 'numberOfSatellite') ?? finite(event);
+      if (satellites !== null) this.snapshot.telemetry.satellites = satellites;
+      update();
+    });
+    this.client.on('Orientation', (event: unknown) => {
+      const tilt = objectNumber(event, 'tilt');
+      const pan = objectNumber(event, 'pan');
+      if (tilt !== null) this.snapshot.telemetry.cameraTilt = tilt;
+      if (pan !== null) this.snapshot.telemetry.cameraPan = pan;
       update();
     });
     this.client.on('flyingState', (value: string) => {

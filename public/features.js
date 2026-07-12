@@ -87,7 +87,10 @@ for (const input of document.querySelectorAll('[data-runtime-feature]')) {
   });
 }
 
-import('./autonomy.js').catch((error) => {
-  const message = $('message');
-  if (message) message.textContent = `Autonomy dashboard failed to load: ${error.message}`;
-});
+import('./pad-map-bridge.js')
+  .then(() => import('./autonomy.js'))
+  .then(() => import('./navigation.js'))
+  .catch((error) => {
+    const message = $('message');
+    if (message) message.textContent = `Autonomy dashboard failed to load: ${error.message}`;
+  });
