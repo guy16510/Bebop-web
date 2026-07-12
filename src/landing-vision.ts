@@ -1,5 +1,6 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import { createInterface, type Interface as ReadlineInterface } from 'node:readline';
+import type { Readable } from 'node:stream';
 import { z } from 'zod';
 import type { ObjectDetection } from './perception.js';
 
@@ -53,10 +54,12 @@ const messageSchema = z.object({
   detections: z.array(detectionSchema),
 });
 
+type LandingVisionProcess = ChildProcessByStdio<null, Readable, Readable>;
+
 export class LandingVisionManager {
   private readonly now: () => number;
   private readonly restartMs: number;
-  private child?: ChildProcessWithoutNullStreams;
+  private child?: LandingVisionProcess;
   private lines?: ReadlineInterface;
   private restartTimer?: NodeJS.Timeout;
   private stopping = false;
@@ -116,7 +119,7 @@ export class LandingVisionManager {
     this.health.lastError = null;
     this.emit();
 
-    const child = spawn('/bin/sh', ['-lc', command], {
+    const child: LandingVisionProcess = spawn('/bin/sh', ['-lc', command], {
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
