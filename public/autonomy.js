@@ -25,7 +25,7 @@ function injectAutonomyDashboard() {
     <div class="autonomy-heading">
       <div>
         <h2>Autonomous flight</h2>
-        <p>Closed-loop takeoff altitude, hover or yaw survey, fail-safe landing, and persisted mission limits. Metric XY route following remains locked because monocular SLAM does not provide reliable scale.</p>
+        <p>Closed-loop takeoff, named-pad transfer, metric obstacle braking, AprilTag precision landing, and persisted mission limits.</p>
       </div>
       <span id="autonomy-stage" class="status status-warning">connecting</span>
     </div>
@@ -33,12 +33,15 @@ function injectAutonomyDashboard() {
     <form id="autonomy-form">
       <div class="autonomy-toggle-grid">
         <label class="feature-toggle autonomy-master"><span><strong>Enable autonomy</strong><small>Master gate. This does not automatically start a mission.</small></span><input id="autonomy-enabled" type="checkbox" /></label>
-        <label class="feature-toggle autonomy-physical"><span><strong>Allow physical flight</strong><small>Simulation is allowed by default. Physical Bebop flight requires this persistent gate and typed confirmation for every launch.</small></span><input id="autonomy-physical" type="checkbox" /></label>
+        <label class="feature-toggle autonomy-physical"><span><strong>Allow physical flight</strong><small>Physical Bebop flight requires this persistent gate and typed confirmation for every launch.</small></span><input id="autonomy-physical" type="checkbox" /></label>
         <label class="feature-toggle"><span><strong>Require live video</strong><small>Block takeoff unless decoded video is running.</small></span><input id="autonomy-require-video" type="checkbox" /></label>
-        <label class="feature-toggle"><span><strong>Require SLAM tracking</strong><small>Block takeoff and land if tracking remains lost for two seconds.</small></span><input id="autonomy-require-perception" type="checkbox" /></label>
+        <label class="feature-toggle"><span><strong>Require SLAM tracking</strong><small>Block takeoff and land if tracking remains lost.</small></span><input id="autonomy-require-perception" type="checkbox" /></label>
+        <label class="feature-toggle"><span><strong>Require landing marker</strong><small>Use the selected pad's AprilTag for final alignment instead of landing immediately.</small></span><input id="autonomy-require-marker" type="checkbox" /></label>
       </div>
       <div class="autonomy-settings-grid">
-        <label>Mission pattern<select id="autonomy-pattern"><option value="hover">Hover only</option><option value="yaw-scan">Hover + yaw scan</option></select></label>
+        <label>Mission pattern<select id="autonomy-pattern"><option value="hover">Hover only</option><option value="yaw-scan">Hover + yaw scan</option><option value="pad-transfer">Fly to named pad</option></select></label>
+        <label>Takeoff pad<select id="autonomy-takeoff-pad"><option value="">Unspecified</option></select></label>
+        <label>Landing pad<select id="autonomy-landing-pad"><option value="">Immediate landing</option></select></label>
         <label>Target altitude, m<input id="autonomy-target-altitude" type="number" min="0.5" max="10" step="0.1" /></label>
         <label>Autonomy ceiling, m<input id="autonomy-max-altitude" type="number" min="0.5" max="10" step="0.1" /></label>
         <label>Command strength, %<input id="autonomy-command" type="number" min="5" max="20" step="1" /></label>
@@ -48,7 +51,9 @@ function injectAutonomyDashboard() {
         <label>Telemetry timeout, ms<input id="autonomy-telemetry-timeout" type="number" min="500" max="5000" step="100" /></label>
         <label>Hover time, seconds<input id="autonomy-hover-seconds" type="number" min="2" max="60" step="1" /></label>
         <label>Yaw scan time, seconds<input id="autonomy-yaw-seconds" type="number" min="2" max="45" step="1" /></label>
-        <label>Maximum flight time, seconds<input id="autonomy-max-seconds" type="number" min="20" max="300" step="5" /></label>
+        <label>Navigation timeout, seconds<input id="autonomy-navigation-seconds" type="number" min="10" max="600" step="5" /></label>
+        <label>Marker search timeout, seconds<input id="autonomy-search-seconds" type="number" min="5" max="120" step="1" /></label>
+        <label>Maximum flight time, seconds<input id="autonomy-max-seconds" type="number" min="20" max="600" step="5" /></label>
       </div>
       <div class="autonomy-save-row">
         <button id="autonomy-save" type="submit">Save mission settings</button>
@@ -60,6 +65,8 @@ function injectAutonomyDashboard() {
       <div><span>Control link</span><strong id="autonomy-link">--</strong></div>
       <div><span>Mission</span><strong id="autonomy-mission">--</strong></div>
       <div><span>Deadline</span><strong id="autonomy-deadline">--</strong></div>
+      <div><span>Target pad</span><strong id="autonomy-target-pad">--</strong></div>
+      <div><span>Guidance</span><strong id="autonomy-guidance">--</strong></div>
     </div>
     <div class="autonomy-preflight">
       <h3>Preflight gates</h3>
@@ -94,6 +101,7 @@ function collectSettings() {
     allowPhysicalFlight: settingValue('autonomy-physical'),
     requireVideo: settingValue('autonomy-require-video'),
     requirePerceptionTracking: settingValue('autonomy-require-perception'),
+    requireLandingMarker: settingValue('autonomy-require-marker'),
     minimumBatteryPercent: settingValue('autonomy-min-battery'),
     reserveBatteryPercent: settingValue('autonomy-reserve-battery'),
     minimumSignalRssi: settingValue('autonomy-min-signal'),
@@ -105,7 +113,30 @@ function collectSettings() {
     pattern: $('autonomy-pattern').value,
     hoverSeconds: settingValue('autonomy-hover-seconds'),
     yawScanSeconds: settingValue('autonomy-yaw-seconds'),
+    navigationTimeoutSeconds: settingValue('autonomy-navigation-seconds'),
+    landingSearchSeconds: settingValue('autonomy-search-seconds'),
+    takeoffPadId: $('autonomy-takeoff-pad').value,
+    landingPadId: $('autonomy-landing-pad').value,
   };
+}
+
+function populatePadSelect(select, pads, current, emptyLabel) {
+  const currentOptions = [...select.options].map((option) => option.value).join('|');
+  const nextOptions = ['', ...pads.map((pad) => pad.id)].join('|');
+  if (currentOptions !== nextOptions) {
+    select.replaceChildren();
+    const empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = emptyLabel;
+    select.append(empty);
+    for (const pad of pads) {
+      const option = document.createElement('option');
+      option.value = pad.id;
+      option.textContent = `${pad.name}, tag ${pad.markerId}${pad.gps ? ', GPS' : ''}`;
+      select.append(option);
+    }
+  }
+  select.value = current || '';
 }
 
 function populateSettings(settings) {
@@ -113,6 +144,7 @@ function populateSettings(settings) {
   $('autonomy-physical').checked = settings.allowPhysicalFlight;
   $('autonomy-require-video').checked = settings.requireVideo;
   $('autonomy-require-perception').checked = settings.requirePerceptionTracking;
+  $('autonomy-require-marker').checked = settings.requireLandingMarker;
   $('autonomy-min-battery').value = settings.minimumBatteryPercent;
   $('autonomy-reserve-battery').value = settings.reserveBatteryPercent;
   $('autonomy-min-signal').value = settings.minimumSignalRssi;
@@ -124,6 +156,11 @@ function populateSettings(settings) {
   $('autonomy-pattern').value = settings.pattern;
   $('autonomy-hover-seconds').value = settings.hoverSeconds;
   $('autonomy-yaw-seconds').value = settings.yawScanSeconds;
+  $('autonomy-navigation-seconds').value = settings.navigationTimeoutSeconds;
+  $('autonomy-search-seconds').value = settings.landingSearchSeconds;
+  const pads = lastStatus?.navigation?.map?.landingPads ?? [];
+  populatePadSelect($('autonomy-takeoff-pad'), pads, settings.takeoffPadId, 'Unspecified');
+  populatePadSelect($('autonomy-landing-pad'), pads, settings.landingPadId, 'Immediate landing');
 }
 
 function durationUntil(timestamp) {
@@ -147,6 +184,11 @@ function renderAutonomy() {
   $('autonomy-link').textContent = lastStatus.controlLink;
   $('autonomy-mission').textContent = lastStatus.missionId ? `#${lastStatus.missionId}` : 'not started';
   $('autonomy-deadline').textContent = active ? durationUntil(lastStatus.deadlineAt) : '--';
+  $('autonomy-target-pad').textContent = lastStatus.navigation?.targetPad?.name ?? 'none';
+  const distance = lastStatus.navigation?.guidanceDistanceMeters;
+  $('autonomy-guidance').textContent = lastStatus.navigation?.guidanceReason
+    ? `${lastStatus.navigation.guidanceReason}${typeof distance === 'number' ? `, ${distance.toFixed(1)} m` : ''}`
+    : '--';
 
   const readiness = $('autonomy-readiness');
   readiness.replaceChildren(...lastStatus.readiness.map((check) => {
@@ -169,7 +211,7 @@ function renderAutonomy() {
 
   const banner = $('autonomy-banner');
   banner.textContent = lastStatus.controlLink === 'connected'
-    ? `Autonomy service online. Settings persist in .bebop/autonomy.json. Current mode: ${lastStatus.mode}.`
+    ? `Autonomy service online. Mission settings persist in .bebop/autonomy.json, navigation definitions persist separately.`
     : `Autonomy service unavailable on port ${configuredPort}. npm run dev starts it automatically.`;
   banner.className = `autonomy-banner ${lastStatus.controlLink === 'connected' ? 'ready' : 'blocked'}`;
 
@@ -239,6 +281,7 @@ function connectAutonomySocket() {
     const message = JSON.parse(event.data);
     if (message.type === 'autonomy.status') {
       lastStatus = message.status;
+      globalThis.dispatchEvent(new CustomEvent('bebop-autonomy-status', { detail: lastStatus }));
       renderAutonomy();
     }
   });
@@ -256,3 +299,5 @@ function connectAutonomySocket() {
 injectAutonomyDashboard();
 connectAutonomySocket();
 setInterval(renderAutonomy, 1_000);
+
+export { autonomyOrigin };
