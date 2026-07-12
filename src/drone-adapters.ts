@@ -209,6 +209,18 @@ export class BebopDrone extends EventEmitter implements DroneAdapter {
 
   constructor(private readonly log: AdapterLogger) {
     super();
+    Object.assign(this.snapshot.telemetry, {
+      latitude: null,
+      longitude: null,
+      gpsAltitude: null,
+      gpsFix: false,
+      satellites: null,
+      roll: null,
+      pitch: null,
+      yaw: null,
+      cameraTilt: null,
+      cameraPan: null,
+    });
   }
 
   async connect(): Promise<void> {
