@@ -57,6 +57,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Keep CI workflow unchanged
+        run: git checkout -- .github/workflows/ci.yml
+
       - name: Commit validated implementation
         run: |
           git config user.name github-actions[bot]
