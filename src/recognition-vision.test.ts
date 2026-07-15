@@ -54,11 +54,14 @@ describe('RecognitionVisionManager', () => {
     await manager.stop();
   });
 
-  it('launches the recognition container with Python and preserves SLAM detection by default', () => {
+  it('launches recognition with Python and retains a low-rate SLAM detector fallback', () => {
     const recognitionScript = readFileSync('scripts/run-recognition-sidecar.sh', 'utf8');
     const perceptionScript = readFileSync('scripts/run-perception-sidecar.sh', 'utf8');
     expect(recognitionScript).toContain('--entrypoint python3');
     expect(recognitionScript).toContain('/work/perception-sidecar/scripts/recognition_stream.py');
     expect(perceptionScript).toContain('RECOGNITION_ENABLED:-false');
+    expect(perceptionScript).toContain('PERCEPTION_FALLBACK_DETECTION_EVERY_N_FRAMES:-10');
+    expect(perceptionScript).toContain('YOLOX_MODEL=/models/yolox_tiny.onnx');
+    expect(perceptionScript).not.toContain('disabled-in-slam-sidecar');
   });
 });
