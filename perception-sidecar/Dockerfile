@@ -5,9 +5,21 @@ ARG ORB_SLAM3_COMMIT=4452a3c4ab75b1cde34e5505a36ec3f9edcdc4c4
 ARG PANGOLIN_COMMIT=d484494645cb7361374ac0ef6b27e9ee6feffbd7
 ARG YOLOX_VERSION=0.1.1rc0
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# The minimal ARM64 Ubuntu image has no CA bundle and its HTTP mirror is not
+# reachable from some hosted runners. Bootstrap only ca-certificates with TLS
+# peer verification disabled; Ubuntu's signed repository metadata still
+# authenticates the package. All subsequent downloads use normal TLS checks.
+RUN sed -i 's|http://ports.ubuntu.com|https://ports.ubuntu.com|g; s|http://archive.ubuntu.com|https://archive.ubuntu.com|g; s|http://security.ubuntu.com|https://security.ubuntu.com|g' /etc/apt/sources.list \
+    && apt-get -o Acquire::Retries=5 -o Acquire::https::Verify-Peer=false -o Acquire::https::Timeout=30 update \
+    && apt-get -o Acquire::Retries=5 -o Acquire::https::Verify-Peer=false -y --no-install-recommends install ca-certificates \
+    && update-ca-certificates \
+    && for attempt in 1 2 3; do \
+      apt-get -o Acquire::Retries=5 -o Acquire::https::Timeout=30 update && break; \
+      if [ "$attempt" = 3 ]; then exit 1; fi; \
+      sleep $((attempt * 5)); \
+    done \
+    && apt-get -o Acquire::Retries=5 -y --no-install-recommends install \
     build-essential \
-    ca-certificates \
     cmake \
     git \
     libavcodec-dev \
@@ -82,9 +94,11 @@ COPY config/perception/bebop2-upstream-428x240.yaml /config/bebop2-upstream-428x
 COPY perception-sidecar/entrypoint.sh /usr/local/bin/perception-entrypoint
 RUN chmod +x /usr/local/bin/perception-entrypoint \
     /work/perception-sidecar/scripts/apriltag_stream.py \
+    /work/perception-sidecar/scripts/recognition_stream.py \
     && export LD_LIBRARY_PATH=/opt/ORB_SLAM3/lib:/opt/ORB_SLAM3/Thirdparty/DBoW2/lib:/opt/ORB_SLAM3/Thirdparty/g2o/lib:/usr/local/lib \
     && /usr/local/bin/bebop-perception-sidecar --self-test | grep -q 'perception.snapshot' \
-    && python3 /work/perception-sidecar/scripts/apriltag_stream.py --self-test | grep -q 'apriltag-7'
+    && python3 /work/perception-sidecar/scripts/apriltag_stream.py --self-test | grep -q 'apriltag-7' \
+    && python3 /work/perception-sidecar/scripts/recognition_stream.py --self-test | grep -q '"ok": true'
 
 ENV ORB_VOCABULARY=/opt/ORB_SLAM3/Vocabulary/ORBvoc.txt \
     ORB_SETTINGS=/config/bebop2.yaml \

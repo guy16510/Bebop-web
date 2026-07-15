@@ -60,6 +60,12 @@ assert (root / 'replay' / 'synthetic.avi').stat().st_size > 0
 assert engines['yolox']['modelLoaded'] is True
 assert engines['yolox']['inferenceExecuted'] is True
 assert engines['yolox']['outputElements'] > 0
+assert engines['yolox']['decodedCandidate'] is True
+assert 0 <= engines['yolox']['bestClassIndex'] < 80
+assert engines['yolox']['bestScore'] > 0
+assert engines['yolox']['candidatesAboveFloor'] > 0
+assert engines['yolox']['bestBox']['width'] > 0
+assert engines['yolox']['bestBox']['height'] > 0
 
 replay = [
     json.loads(line)['snapshot']
@@ -84,6 +90,8 @@ print(json.dumps({
     'maxTrajectory': max(len(item['trajectory']) for item in replay),
     'maxTrackedFeatures': max(item['metrics']['trackedFeatures'] for item in replay),
     'yoloxOutputElements': engines['yolox']['outputElements'],
+    'yoloxBestClassIndex': engines['yolox']['bestClassIndex'],
+    'yoloxBestScore': engines['yolox']['bestScore'],
     'productionSnapshots': len(replay),
 }))
 PY
