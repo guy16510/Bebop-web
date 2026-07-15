@@ -314,43 +314,37 @@ int main() {
     requireFinite(output);
     const YoloCandidate candidate = decodeBestCandidate(output);
 
-    protocol
-        << json({{"ok", true},
-                 {"camera",
-                  {{"model", "PinHole"},
-                   {"width", kWidth},
-                   {"height", kHeight},
-                   {"fx", kFx},
-                   {"fy", kFy},
-                   {"cx", kCx},
-                   {"cy", kCy}}},
-                 {"orbSlam3",
-                  {{"vocabularyLoaded", true},
-                   {"systemConstructed", true},
-                   {"framesSubmitted", framesSubmitted},
-                   {"trackingReached", trackingReached},
-                   {"finalTrackingState", finalTrackingState},
-                   {"maxTrackedPoints", maxTrackedPoints},
-                   {"maxTrackedFeatures", maxTrackedFeatures},
-                   {"syntheticVideoWritten", !videoOutput.empty()},
-                   {"syntheticVideoPath", videoOutput}}},
-                 {"yolox",
-                  {{"modelLoaded", true},
-                   {"inferenceExecuted", true},
-                   {"outputDimensions", output.dims},
-                   {"outputElements", output.total()},
-                   {"decodedCandidate", true},
-                   {"bestClassIndex", candidate.classIndex},
-                   {"bestScore", candidate.score},
-                   {"candidatesAboveFloor", candidate.candidatesAboveFloor},
-                   {"bestBox",
-                    {{"x", candidate.box.x},
-                     {"y", candidate.box.y},
-                     {"width", candidate.box.width},
-                     {"height", candidate.box.height}}}}}}})
-               .dump()
-        << '\n'
-        << std::flush;
+    json report;
+    report["ok"] = true;
+    report["camera"] = {
+        {"model", "PinHole"}, {"width", kWidth}, {"height", kHeight},
+        {"fx", kFx}, {"fy", kFy}, {"cx", kCx}, {"cy", kCy}};
+    report["orbSlam3"] = {
+        {"vocabularyLoaded", true},
+        {"systemConstructed", true},
+        {"framesSubmitted", framesSubmitted},
+        {"trackingReached", trackingReached},
+        {"finalTrackingState", finalTrackingState},
+        {"maxTrackedPoints", maxTrackedPoints},
+        {"maxTrackedFeatures", maxTrackedFeatures},
+        {"syntheticVideoWritten", !videoOutput.empty()},
+        {"syntheticVideoPath", videoOutput}};
+    report["yolox"] = {
+        {"modelLoaded", true},
+        {"inferenceExecuted", true},
+        {"outputDimensions", output.dims},
+        {"outputElements", output.total()},
+        {"decodedCandidate", true},
+        {"bestClassIndex", candidate.classIndex},
+        {"bestScore", candidate.score},
+        {"candidatesAboveFloor", candidate.candidatesAboveFloor},
+        {"bestBox",
+         {{"x", candidate.box.x},
+          {"y", candidate.box.y},
+          {"width", candidate.box.width},
+          {"height", candidate.box.height}}}};
+
+    protocol << report.dump() << '\n' << std::flush;
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "Perception engine self-test failed: " << error.what() << '\n';
