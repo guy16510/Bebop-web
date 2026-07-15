@@ -36,6 +36,12 @@ export interface RecognitionSample {
   sourceTrackId: string;
 }
 
+export interface RecognitionSampleStatus {
+  id: string;
+  capturedAt: number;
+  sourceTrackId: string;
+}
+
 export interface RecognitionObject {
   id: string;
   name: string;
@@ -48,12 +54,24 @@ export interface RecognitionObject {
   updatedAt: number;
 }
 
+export interface RecognitionObjectStatus {
+  id: string;
+  name: string;
+  labels: string[];
+  enabled: boolean;
+  threshold: number;
+  minimumConfirmations: number;
+  samples: RecognitionSampleStatus[];
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface RecognitionRegistryStatus {
   revision: number;
   updatedAt: number;
   storagePath: string | null;
   minimumSamples: number;
-  objects: RecognitionObject[];
+  objects: RecognitionObjectStatus[];
   metrics: {
     evaluated: number;
     confirmed: number;
@@ -152,6 +170,24 @@ function descriptorFor(detection: RecognizableDetection, minimumConfidence: numb
   return normalizedDescriptor(detection.appearance);
 }
 
+function publicObject(object: RecognitionObject): RecognitionObjectStatus {
+  return {
+    id: object.id,
+    name: object.name,
+    labels: [...object.labels],
+    enabled: object.enabled,
+    threshold: object.threshold,
+    minimumConfirmations: object.minimumConfirmations,
+    samples: object.samples.map((sample) => ({
+      id: sample.id,
+      capturedAt: sample.capturedAt,
+      sourceTrackId: sample.sourceTrackId,
+    })),
+    createdAt: object.createdAt,
+    updatedAt: object.updatedAt,
+  };
+}
+
 export class ObjectRecognitionManager {
   private readonly now: () => number;
   private readonly minimumSamples: number;
@@ -186,7 +222,7 @@ export class ObjectRecognitionManager {
       updatedAt: this.updatedAt,
       storagePath: this.storagePath ?? null,
       minimumSamples: this.minimumSamples,
-      objects: clone(this.objects),
+      objects: this.objects.map(publicObject),
       metrics: { ...this.metrics },
     };
   }
@@ -198,10 +234,14 @@ export class ObjectRecognitionManager {
     for (const [trackId, vote] of this.votes) {
       if (!activeTracks.has(trackId) && now - vote.lastSeenAt > 5_000) this.votes.delete(trackId);
     }
-    return detections.map((detection) => this.recognizeOne(detection, now));
+    return detections.map((detection) => {
+      const recognized = this.recognizeOne(detection, now);
+      delete recognized.appearance;
+      return recognized;
+    });
   }
 
-  enroll(name: string, detection: RecognizableDetection): RecognitionObject {
+  enroll(name: string, detection: RecognizableDetection): RecognitionObjectStatus {
     const cleanName = name.trim().slice(0, 128);
     if (!cleanName) throw new Error('A recognition name is required');
     const label = detection.label.trim().toLowerCase();
@@ -224,10 +264,10 @@ export class ObjectRecognitionManager {
     };
     this.objects.push(object);
     this.commit();
-    return clone(object);
+    return publicObject(object);
   }
 
-  addSample(objectId: string, detection: RecognizableDetection): RecognitionObject {
+  addSample(objectId: string, detection: RecognizableDetection): RecognitionObjectStatus {
     const object = this.requireObject(objectId);
     const label = detection.label.trim().toLowerCase();
     if (!object.labels.includes(label)) {
@@ -246,7 +286,7 @@ export class ObjectRecognitionManager {
     if (object.samples.length > this.maximumSamplesPerObject) object.samples.shift();
     object.updatedAt = now;
     this.commit();
-    return clone(object);
+    return publicObject(object);
   }
 
   update(objectId: string, patch: {
@@ -255,7 +295,7 @@ export class ObjectRecognitionManager {
     enabled?: boolean;
     threshold?: number;
     minimumConfirmations?: number;
-  }): RecognitionObject {
+  }): RecognitionObjectStatus {
     const object = this.requireObject(objectId);
     if (patch.name !== undefined) {
       const name = patch.name.trim().slice(0, 128);
@@ -274,7 +314,7 @@ export class ObjectRecognitionManager {
     }
     object.updatedAt = this.now();
     this.commit();
-    return clone(object);
+    return publicObject(object);
   }
 
   remove(objectId: string): void {
