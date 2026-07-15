@@ -6,6 +6,7 @@ let autonomySocket;
 let reconnectTimer;
 let lastStatus;
 let saving = false;
+let editing = false;
 
 function $(id) {
   return document.getElementById(id);
@@ -33,7 +34,7 @@ function injectAutonomyDashboard() {
     <form id="autonomy-form">
       <div class="autonomy-toggle-grid">
         <label class="feature-toggle autonomy-master"><span><strong>Enable autonomy</strong><small>Master mission gate.</small></span><input id="autonomy-enabled" type="checkbox" /></label>
-        <label class="feature-toggle autonomy-physical"><span><strong>Allow physical flight</strong><small>Requires typed confirmation for every launch.</small></span><input id="autonomy-physical" type="checkbox" /></label>
+        <label class="feature-toggle autonomy-physical"><span><strong>Allow physical flight</strong><small>Requires confirmation before every launch.</small></span><input id="autonomy-physical" type="checkbox" /></label>
         <label class="feature-toggle"><span><strong>Require live video</strong><small>Block takeoff and land on stale frames.</small></span><input id="autonomy-require-video" type="checkbox" /></label>
         <label class="feature-toggle"><span><strong>Require SLAM tracking</strong><small>Block takeoff and land if tracking is lost.</small></span><input id="autonomy-require-perception" type="checkbox" /></label>
         <label class="feature-toggle"><span><strong>Require landing marker</strong><small>Align to the selected pad's AprilTag.</small></span><input id="autonomy-require-marker" type="checkbox" /></label>
@@ -75,13 +76,22 @@ function injectAutonomyDashboard() {
     </div>
     <div class="autonomy-preflight"><h3>Preflight gates</h3><ul id="autonomy-readiness"></ul></div>
     <div class="autonomy-launch-row">
-      <label class="autonomy-confirm">Physical-flight confirmation<input id="autonomy-confirmation" type="text" autocomplete="off" placeholder="START AUTONOMOUS FLIGHT" /></label>
       <button id="autonomy-start" type="button" class="primary">Start autonomous mission</button>
       <button id="autonomy-abort" type="button" class="land">Abort and land</button>
       <button id="autonomy-land" type="button">Land now</button>
       <button id="autonomy-emergency" type="button" class="danger">Emergency, cut motors</button>
     </div>
     <p id="autonomy-error" class="autonomy-error" hidden></p>
+    <dialog id="autonomy-confirm-dialog" class="autonomy-confirm-dialog">
+      <form method="dialog">
+        <h3>Start autonomous flight?</h3>
+        <p>The drone will take off and move without continuous pilot input. Keep the flight area clear and be ready to use <strong>Abort and land</strong>.</p>
+        <div class="autonomy-dialog-actions">
+          <button value="cancel" type="submit">Cancel</button>
+          <button id="autonomy-confirm-start" value="confirm" type="submit" class="primary">Yes, start flight</button>
+        </div>
+      </form>
+    </dialog>
   `;
 
   document.querySelector('.grid')?.prepend(card);
@@ -183,7 +193,7 @@ function renderAutonomy() {
   stageElement.textContent = stage;
   stageElement.className = `status ${['idle', 'completed'].includes(stage) ? 'status-ready' : ['fault', 'aborted'].includes(stage) ? 'status-blocked' : 'status-warning'}`;
 
-  if (!saving && !active) populateSettings(settings);
+  if (!saving && !editing && !active) populateSettings(settings);
   $('autonomy-revision').textContent = `revision ${lastStatus.settings.revision}, ${lastStatus.settings.updatedBy}`;
   $('autonomy-mode').textContent = lastStatus.mode;
   $('autonomy-link').textContent = lastStatus.controlLink;
@@ -212,7 +222,6 @@ function renderAutonomy() {
   $('autonomy-abort').disabled = !active;
   $('autonomy-land').disabled = lastStatus.telemetry?.flyingState === 'landed';
   $('autonomy-emergency').disabled = lastStatus.controlLink !== 'connected';
-  $('autonomy-confirmation').disabled = active || lastStatus.mode !== 'bebop';
 
   const banner = $('autonomy-banner');
   banner.textContent = lastStatus.controlLink === 'connected'
@@ -246,12 +255,19 @@ function showError(error) {
 }
 
 function bindAutonomyControls() {
+  $('autonomy-form').addEventListener('input', () => {
+    editing = true;
+  });
+  $('autonomy-form').addEventListener('change', () => {
+    editing = true;
+  });
   $('autonomy-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     saving = true;
     renderAutonomy();
     try {
       await request('/api/autonomy/settings', { method: 'POST', body: collectSettings() });
+      editing = false;
     } catch (error) {
       showError(error);
     } finally {
@@ -260,16 +276,25 @@ function bindAutonomyControls() {
     }
   });
 
-  $('autonomy-start').addEventListener('click', async () => {
+  const startMission = async () => {
     try {
       await request('/api/autonomy/start', {
         method: 'POST',
-        body: { confirmation: $('autonomy-confirmation').value.trim() },
+        body: { confirmation: lastStatus?.mode === 'bebop' ? 'START AUTONOMOUS FLIGHT' : undefined },
       });
-      $('autonomy-confirmation').value = '';
     } catch (error) {
       showError(error);
     }
+  };
+  $('autonomy-start').addEventListener('click', () => {
+    if (lastStatus?.mode !== 'bebop') {
+      startMission();
+      return;
+    }
+    $('autonomy-confirm-dialog').showModal();
+  });
+  $('autonomy-confirm-dialog').addEventListener('close', () => {
+    if ($('autonomy-confirm-dialog').returnValue === 'confirm') startMission();
   });
   $('autonomy-abort').addEventListener('click', () => request('/api/autonomy/abort', { method: 'POST', body: {} }).catch(showError));
   $('autonomy-land').addEventListener('click', () => request('/api/autonomy/land', { method: 'POST', body: {} }).catch(showError));

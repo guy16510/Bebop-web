@@ -57,8 +57,7 @@
   margin-top: 12px;
 }
 
-.autonomy-settings-grid label,
-.autonomy-confirm {
+.autonomy-settings-grid label {
   display: grid;
   gap: 5px;
   color: #cbd5e1;
@@ -66,8 +65,7 @@
 }
 
 .autonomy-settings-grid input,
-.autonomy-settings-grid select,
-.autonomy-confirm input {
+.autonomy-settings-grid select {
   width: 100%;
   box-sizing: border-box;
   padding: 9px 10px;
@@ -153,9 +151,35 @@
   color: #f87171;
 }
 
-.autonomy-confirm {
-  min-width: 285px;
-  flex: 1;
+.autonomy-confirm-dialog {
+  width: min(460px, calc(100% - 32px));
+  box-sizing: border-box;
+  padding: 22px;
+  border: 1px solid #9a3412;
+  border-radius: 12px;
+  background: #0f172a;
+  color: #f8fafc;
+}
+
+.autonomy-confirm-dialog::backdrop {
+  background: rgb(2 6 23 / 78%);
+  backdrop-filter: blur(3px);
+}
+
+.autonomy-confirm-dialog h3 {
+  margin-top: 0;
+}
+
+.autonomy-confirm-dialog p {
+  color: #cbd5e1;
+  line-height: 1.5;
+}
+
+.autonomy-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
 }
 
 .autonomy-error {
@@ -176,8 +200,7 @@
   }
 
   .autonomy-launch-row button,
-  .autonomy-save-row button,
-  .autonomy-confirm {
+  .autonomy-save-row button {
     width: 100%;
   }
 }
