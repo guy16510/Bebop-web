@@ -5,7 +5,12 @@ import { describe, expect, it } from 'vitest';
 import { ObjectRecognitionManager, type RecognizableDetection } from './object-recognition.js';
 
 function vector(seed: number, drift = 0): number[] {
-  const raw = Array.from({ length: 64 }, (_, index) => Math.sin(seed * 7 + index * 0.31) + drift * Math.cos(index));
+  const raw = Array.from({ length: 64 }, (_, index) => {
+    const position = index + 1;
+    return Math.sin(seed * position * 1.731)
+      + Math.cos((seed + 3) * position * 0.713)
+      + drift * Math.sin(position * 2.17);
+  });
   const norm = Math.sqrt(raw.reduce((sum, value) => sum + value * value, 0));
   return raw.map((value) => value / norm);
 }
@@ -30,10 +35,10 @@ describe('ObjectRecognitionManager', () => {
     const manager = new ObjectRecognitionManager({ now: () => now, minimumSamples: 3 });
     const first = detection('chair-1', 'chair', vector(1));
     const object = manager.enroll('Red chair', first);
-    manager.addSample(object.id, detection('chair-1', 'chair', vector(1, 0.08), ++now));
-    manager.addSample(object.id, detection('chair-1', 'chair', vector(1, -0.08), ++now));
+    manager.addSample(object.id, detection('chair-1', 'chair', vector(1, 0.15), ++now));
+    manager.addSample(object.id, detection('chair-1', 'chair', vector(1, -0.15), ++now));
 
-    const candidate = detection('chair-22', 'chair', vector(1, 0.02), ++now);
+    const candidate = detection('chair-22', 'chair', vector(1, 0.05), ++now);
     expect(manager.recognize([candidate], now)[0].recognition?.state).toBe('candidate');
     expect(manager.recognize([candidate], ++now)[0].recognition?.state).toBe('candidate');
     const confirmed = manager.recognize([candidate], ++now)[0];
@@ -45,8 +50,8 @@ describe('ObjectRecognitionManager', () => {
     let now = 5_000;
     const manager = new ObjectRecognitionManager({ now: () => now, minimumSamples: 3 });
     const object = manager.enroll('Toolbox', detection('suitcase-1', 'suitcase', vector(2), now));
-    manager.addSample(object.id, detection('suitcase-1', 'suitcase', vector(2, 0.07), ++now));
-    manager.addSample(object.id, detection('suitcase-1', 'suitcase', vector(2, -0.07), ++now));
+    manager.addSample(object.id, detection('suitcase-1', 'suitcase', vector(2, 0.15), ++now));
+    manager.addSample(object.id, detection('suitcase-1', 'suitcase', vector(2, -0.15), ++now));
 
     expect(() => manager.addSample(object.id, detection('chair-1', 'chair', vector(2), ++now))).toThrow(/does not match/);
     const unknown = manager.recognize([detection('suitcase-9', 'suitcase', vector(19), ++now)], now)[0];
@@ -61,8 +66,8 @@ describe('ObjectRecognitionManager', () => {
       let now = 10_000;
       const manager = new ObjectRecognitionManager({ storagePath: path, now: () => now });
       const object = manager.enroll('Desk chair', detection('chair-1', 'chair', vector(3), now));
-      manager.addSample(object.id, detection('chair-1', 'chair', vector(3, 0.1), ++now));
-      manager.addSample(object.id, detection('chair-1', 'chair', vector(3, -0.1), ++now));
+      manager.addSample(object.id, detection('chair-1', 'chair', vector(3, 0.15), ++now));
+      manager.addSample(object.id, detection('chair-1', 'chair', vector(3, -0.15), ++now));
       const raw = JSON.parse(readFileSync(path, 'utf8'));
       expect(raw.objects[0].samples).toHaveLength(3);
 
