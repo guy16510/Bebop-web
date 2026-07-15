@@ -81,5 +81,6 @@ export function applyBebopPilotingCommand(client: BebopPilotingClient, command: 
 
   // Some clients create _pcmd lazily inside stop(). Correct the flag after using
   // their public helpers as well.
-  if (client._pcmd !== undefined) client._pcmd.flag = pcmd.flag;
+  const lazyPcmd = Reflect.get(client, '_pcmd') as Partial<BebopPcmdState> | undefined;
+  if (lazyPcmd !== undefined) lazyPcmd.flag = pcmd.flag;
 }
