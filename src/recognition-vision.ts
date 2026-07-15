@@ -75,15 +75,9 @@ const messageSchema = z.object({
 
 type RecognitionVisionProcess = ChildProcessByStdio<null, Readable, Readable>;
 
-function environmentConfidence(): number {
-  const value = Number(process.env.RECOGNITION_MINIMUM_CONFIDENCE ?? process.env.YOLOX_CONFIDENCE ?? 0.35);
-  return Number.isFinite(value) ? Math.max(0.1, Math.min(0.99, value)) : 0.35;
-}
-
 export class RecognitionVisionManager {
   private readonly now: () => number;
   private readonly restartMs: number;
-  private readonly minimumConfidence: number;
   private child?: RecognitionVisionProcess;
   private lines?: ReadlineInterface;
   private restartTimer?: NodeJS.Timeout;
@@ -94,7 +88,6 @@ export class RecognitionVisionManager {
   constructor(private readonly options: RecognitionVisionOptions) {
     this.now = options.now ?? Date.now;
     this.restartMs = Math.max(500, options.restartMs ?? 2_000);
-    this.minimumConfidence = environmentConfidence();
     const enabled = options.enabled !== false && Boolean(options.command?.trim());
     this.snapshot = { timestamp: 0, source: enabled ? 'recognition-sidecar' : 'disabled', detections: [] };
     this.health = {
@@ -176,10 +169,7 @@ export class RecognitionVisionManager {
       this.snapshot = {
         timestamp: parsed.timestamp,
         source: parsed.source,
-        detections: parsed.detections.filter((detection) => (
-          detection.track.state === 'confirmed'
-          && detection.confidence >= this.minimumConfidence
-        )),
+        detections: parsed.detections,
       };
       Object.assign(this.health, parsed.metrics);
       this.health.state = 'running';
