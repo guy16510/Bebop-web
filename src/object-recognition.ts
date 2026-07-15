@@ -75,6 +75,7 @@ interface RecognitionManagerOptions {
   minimumSamples?: number;
   maximumSamplesPerObject?: number;
   minimumMargin?: number;
+  minimumEnrollmentConfidence?: number;
   now?: () => number;
   onChange?: (status: RecognitionRegistryStatus) => void;
 }
@@ -137,9 +138,15 @@ function averageTop(values: number[], count: number): number {
   return top.reduce((sum, value) => sum + value, 0) / top.length;
 }
 
-function descriptorFor(detection: RecognizableDetection): number[] {
-  if (detection.track && detection.track.state !== 'confirmed') {
-    throw new Error(`Track ${detection.id} is not confirmed yet`);
+function environmentEnrollmentConfidence(): number {
+  const raw = Number(process.env.RECOGNITION_MINIMUM_CONFIDENCE ?? process.env.YOLOX_CONFIDENCE ?? 0.35);
+  return Number.isFinite(raw) ? Math.max(0.1, Math.min(0.99, raw)) : 0.35;
+}
+
+function descriptorFor(detection: RecognizableDetection, minimumConfidence: number): number[] {
+  if (detection.track?.state !== 'confirmed') throw new Error(`Track ${detection.id} is not confirmed yet`);
+  if (detection.confidence < minimumConfidence) {
+    throw new Error(`Track ${detection.id} confidence is below the enrollment minimum`);
   }
   if (!detection.appearance) throw new Error(`Track ${detection.id} has no appearance descriptor`);
   return normalizedDescriptor(detection.appearance);
@@ -150,6 +157,7 @@ export class ObjectRecognitionManager {
   private readonly minimumSamples: number;
   private readonly maximumSamplesPerObject: number;
   private readonly minimumMargin: number;
+  private readonly minimumEnrollmentConfidence: number;
   private readonly storagePath?: string;
   private objects: RecognitionObject[] = [];
   private revision = 0;
@@ -163,6 +171,10 @@ export class ObjectRecognitionManager {
     this.minimumSamples = Math.max(2, Math.min(12, options.minimumSamples ?? 3));
     this.maximumSamplesPerObject = Math.max(this.minimumSamples, Math.min(128, options.maximumSamplesPerObject ?? 48));
     this.minimumMargin = Math.max(0.01, Math.min(0.25, options.minimumMargin ?? 0.04));
+    this.minimumEnrollmentConfidence = Math.max(0.1, Math.min(
+      0.99,
+      options.minimumEnrollmentConfidence ?? environmentEnrollmentConfidence(),
+    ));
     this.storagePath = options.storagePath;
     this.reload(true);
   }
@@ -193,7 +205,7 @@ export class ObjectRecognitionManager {
     const cleanName = name.trim().slice(0, 128);
     if (!cleanName) throw new Error('A recognition name is required');
     const label = detection.label.trim().toLowerCase();
-    const descriptor = descriptorFor(detection);
+    const descriptor = descriptorFor(detection, this.minimumEnrollmentConfidence);
     const now = this.now();
     let id = cleanId(cleanName) || `object-${now}`;
     const base = id;
@@ -221,7 +233,7 @@ export class ObjectRecognitionManager {
     if (!object.labels.includes(label)) {
       throw new Error(`Track label ${label} does not match enrolled labels ${object.labels.join(', ')}`);
     }
-    const descriptor = descriptorFor(detection);
+    const descriptor = descriptorFor(detection, this.minimumEnrollmentConfidence);
     const duplicate = object.samples.some((sample) => cosine(sample.descriptor, descriptor) > 0.995);
     if (duplicate) throw new Error('This view is too similar to an existing sample, capture a different angle or distance');
     const now = this.now();
