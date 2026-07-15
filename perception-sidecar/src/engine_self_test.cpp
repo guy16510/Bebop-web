@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -22,6 +23,7 @@ namespace {
 
 constexpr int kWidth = 428;
 constexpr int kHeight = 240;
+constexpr int kYoloInputSize = 416;
 constexpr double kFx = 268.646439;
 constexpr double kFy = 263.500174;
 constexpr double kCx = 213.665927;
@@ -35,6 +37,13 @@ std::string envString(const char* name, const std::string& fallback) {
 struct SyntheticPoint {
   cv::Point3f world;
   int pattern = 0;
+};
+
+struct YoloCandidate {
+  int classIndex = -1;
+  float score = 0;
+  cv::Rect2f box;
+  std::size_t candidatesAboveFloor = 0;
 };
 
 const std::vector<SyntheticPoint>& syntheticCloud() {
@@ -119,6 +128,104 @@ void requireFinite(const cv::Mat& output) {
   }
 }
 
+cv::Mat flattenYoloOutput(const cv::Mat& output) {
+  if (output.empty()) return {};
+  if (output.dims == 3) {
+    cv::Mat rows(output.size[1], output.size[2], CV_32F,
+                 const_cast<float*>(output.ptr<float>()));
+    if (rows.cols == 85) return rows.clone();
+    if (rows.rows == 85) {
+      cv::Mat transposed;
+      cv::transpose(rows, transposed);
+      return transposed;
+    }
+  }
+  if (output.dims == 2) {
+    if (output.cols == 85) return output.clone();
+    if (output.rows == 85) {
+      cv::Mat transposed;
+      cv::transpose(output, transposed);
+      return transposed;
+    }
+  }
+  return {};
+}
+
+void decodeYoloRows(cv::Mat& rows) {
+  int row = 0;
+  for (int stride : {8, 16, 32}) {
+    const int grid = kYoloInputSize / stride;
+    for (int y = 0; y < grid && row < rows.rows; ++y) {
+      for (int x = 0; x < grid && row < rows.rows; ++x, ++row) {
+        float* values = rows.ptr<float>(row);
+        values[0] = (values[0] + x) * stride;
+        values[1] = (values[1] + y) * stride;
+        values[2] = std::exp(std::clamp(values[2], -10.0F, 10.0F)) * stride;
+        values[3] = std::exp(std::clamp(values[3], -10.0F, 10.0F)) * stride;
+      }
+    }
+  }
+}
+
+YoloCandidate decodeBestCandidate(const cv::Mat& output) {
+  cv::Mat rows = flattenYoloOutput(output);
+  if (rows.empty() || rows.cols < 85) {
+    throw std::runtime_error("YOLOX output shape cannot be decoded into detection rows");
+  }
+  decodeYoloRows(rows);
+
+  YoloCandidate best;
+  for (int row = 0; row < rows.rows; ++row) {
+    const float* values = rows.ptr<float>(row);
+    const float objectness = values[4];
+    if (!std::isfinite(objectness)) continue;
+    int bestClass = -1;
+    float bestClassScore = -std::numeric_limits<float>::infinity();
+    for (int classIndex = 0; classIndex < 80; ++classIndex) {
+      const float classScore = values[5 + classIndex];
+      if (std::isfinite(classScore) && classScore > bestClassScore) {
+        bestClassScore = classScore;
+        bestClass = classIndex;
+      }
+    }
+    if (bestClass < 0 || !std::isfinite(bestClassScore)) continue;
+    const float score = objectness * bestClassScore;
+    const float centerX = values[0];
+    const float centerY = values[1];
+    const float width = values[2];
+    const float height = values[3];
+    if (!std::isfinite(score) || !std::isfinite(centerX) ||
+        !std::isfinite(centerY) || !std::isfinite(width) ||
+        !std::isfinite(height) || width <= 0 || height <= 0) {
+      continue;
+    }
+
+    const float left = std::clamp(centerX - width / 2, 0.0F,
+                                  static_cast<float>(kYoloInputSize - 1));
+    const float top = std::clamp(centerY - height / 2, 0.0F,
+                                 static_cast<float>(kYoloInputSize - 1));
+    const float right = std::clamp(centerX + width / 2, left + 0.001F,
+                                   static_cast<float>(kYoloInputSize));
+    const float bottom = std::clamp(centerY + height / 2, top + 0.001F,
+                                    static_cast<float>(kYoloInputSize));
+    if (right <= left || bottom <= top) continue;
+    if (score > 1e-8F) ++best.candidatesAboveFloor;
+    if (best.classIndex < 0 || score > best.score) {
+      best.classIndex = bestClass;
+      best.score = score;
+      best.box = cv::Rect2f(left, top, right - left, bottom - top);
+    }
+  }
+
+  if (best.classIndex < 0 || best.classIndex >= 80 ||
+      !std::isfinite(best.score) || best.score <= 0 ||
+      best.box.width <= 0 || best.box.height <= 0 ||
+      best.candidatesAboveFloor == 0) {
+    throw std::runtime_error("YOLOX inference did not decode into a usable candidate");
+  }
+  return best;
+}
+
 }  // namespace
 
 int main() {
@@ -198,12 +305,14 @@ int main() {
     detector.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
     cv::Mat detectorInput = makeSyntheticFrame(20);
     cv::Mat resized;
-    cv::resize(detectorInput, resized, cv::Size(416, 416));
-    cv::Mat blob = cv::dnn::blobFromImage(resized, 1.0, cv::Size(416, 416),
-                                          cv::Scalar(), false, false, CV_32F);
+    cv::resize(detectorInput, resized, cv::Size(kYoloInputSize, kYoloInputSize));
+    cv::Mat blob = cv::dnn::blobFromImage(
+        resized, 1.0, cv::Size(kYoloInputSize, kYoloInputSize), cv::Scalar(),
+        false, false, CV_32F);
     detector.setInput(blob);
     cv::Mat output = detector.forward();
     requireFinite(output);
+    const YoloCandidate candidate = decodeBestCandidate(output);
 
     protocol
         << json({{"ok", true},
@@ -229,7 +338,16 @@ int main() {
                   {{"modelLoaded", true},
                    {"inferenceExecuted", true},
                    {"outputDimensions", output.dims},
-                   {"outputElements", output.total()}}}})
+                   {"outputElements", output.total()},
+                   {"decodedCandidate", true},
+                   {"bestClassIndex", candidate.classIndex},
+                   {"bestScore", candidate.score},
+                   {"candidatesAboveFloor", candidate.candidatesAboveFloor},
+                   {"bestBox",
+                    {{"x", candidate.box.x},
+                     {"y", candidate.box.y},
+                     {"width", candidate.box.width},
+                     {"height", candidate.box.height}}}}}}})
                .dump()
         << '\n'
         << std::flush;
