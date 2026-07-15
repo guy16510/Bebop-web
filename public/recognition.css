@@ -1,0 +1,13 @@
+.recognition-card { grid-column: 1 / -1; }
+.recognition-body { display: grid; gap: 18px; }
+.recognition-warning { margin: 0; padding: 12px; border: 1px solid var(--warning, #a87b19); border-radius: 10px; }
+.recognition-metrics { display: flex; flex-wrap: wrap; gap: 8px; }
+.recognition-metrics span { padding: 6px 9px; border-radius: 999px; background: rgba(127, 127, 127, 0.14); font-size: 0.82rem; }
+.recognition-list { display: grid; gap: 10px; }
+.recognition-item { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px; border: 1px solid rgba(127, 127, 127, 0.28); border-radius: 10px; }
+.recognition-item > div:first-child { display: grid; gap: 3px; }
+.recognition-item small { opacity: 0.76; }
+.recognition-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.recognition-actions select { min-width: 150px; }
+.recognition-error { margin: 0; color: var(--danger, #d33); }
+@media (max-width: 760px) { .recognition-item { align-items: stretch; flex-direction: column; } .recognition-actions { justify-content: flex-start; } }
