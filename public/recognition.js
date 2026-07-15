@@ -53,16 +53,22 @@ function percent(value) {
 
 function liveTrack(detection, objects) {
   const match = detection.recognition ?? {};
+  const confirmedTrack = detection.track?.state === 'confirmed';
   const options = objects
     .filter((object) => object.labels.includes(detection.label))
     .map((object) => `<option value="${escapeHtml(object.id)}">${escapeHtml(object.name)}</option>`)
     .join('');
-  const sample = options ? `<select data-recognition-object>${options}</select><button type="button" data-recognition-sample="${escapeHtml(detection.id)}">Add sample</button>` : '';
+  const sample = options && confirmedTrack
+    ? `<select data-recognition-object>${options}</select><button type="button" data-recognition-sample="${escapeHtml(detection.id)}">Add sample</button>`
+    : '';
+  const enroll = confirmedTrack
+    ? `<button type="button" data-recognition-enroll="${escapeHtml(detection.id)}">Enroll as new object</button>`
+    : '<button type="button" disabled>Waiting for confirmed track</button>';
   return `<article class="recognition-item">
     <div><strong>${escapeHtml(detection.recognizedName ?? detection.label)}</strong>
       <small>${escapeHtml(detection.id)} · ${escapeHtml(detection.track?.state ?? 'unknown track')} · detector ${percent(detection.confidence)}</small>
       <small>recognition ${escapeHtml(match.state ?? 'unavailable')} · score ${percent(match.score)} · confirmations ${match.confirmations ?? 0}</small></div>
-    <div class="recognition-actions"><button type="button" data-recognition-enroll="${escapeHtml(detection.id)}">Enroll as new object</button>${sample}</div>
+    <div class="recognition-actions">${enroll}${sample}</div>
   </article>`;
 }
 
@@ -84,10 +90,11 @@ function render() {
   if (!recognitionStatus) return;
   const state = document.getElementById('recognition-state');
   const health = recognitionStatus.vision;
-  state.textContent = health.state;
-  state.className = `status ${health.state === 'running' ? 'status-ready' : health.state === 'fault' ? 'status-blocked' : 'status-warning'}`;
-
   const registry = recognitionStatus.registry;
+  const faulted = health.state === 'fault' || Boolean(registry.lastError);
+  state.textContent = registry.lastError ? 'registry fault' : health.state;
+  state.className = `status ${health.state === 'running' && !faulted ? 'status-ready' : faulted ? 'status-blocked' : 'status-warning'}`;
+
   document.getElementById('recognition-metrics').innerHTML = `
     <span>input ${health.inputFps.toFixed(1)} fps</span><span>detection ${health.detectionFps.toFixed(1)} fps</span>
     <span>inference ${health.inferenceMs.toFixed(0)} ms</span><span>latency ${health.endToEndLatencyMs.toFixed(0)} ms</span>
@@ -100,7 +107,7 @@ function render() {
   document.getElementById('recognition-enrolled-empty').hidden = registry.objects.length > 0;
 
   const error = document.getElementById('recognition-error');
-  const message = recognitionError ?? health.lastError;
+  const message = recognitionError ?? health.lastError ?? registry.lastError;
   error.hidden = !message;
   error.textContent = message ?? '';
 }
