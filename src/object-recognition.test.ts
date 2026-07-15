@@ -40,6 +40,7 @@ describe('ObjectRecognitionManager', () => {
     let now = 1_000;
     const manager = new ObjectRecognitionManager({ now: () => now, minimumSamples: 3 });
     const object = manager.enroll('Red chair', detection('chair-1', 'chair', vector(1), now));
+    expect('descriptor' in object.samples[0]).toBe(false);
     manager.addSample(object.id, detection('chair-1', 'chair', vector(1, 0.15), ++now));
     manager.addSample(object.id, detection('chair-1', 'chair', vector(1, -0.15), ++now));
 
@@ -47,6 +48,7 @@ describe('ObjectRecognitionManager', () => {
     const first = manager.recognize([firstObservation], now)[0];
     expect(first.recognition?.state).toBe('candidate');
     expect(first.recognition?.confirmations).toBe(1);
+    expect(first.appearance).toBeUndefined();
 
     const repeated = manager.recognize([firstObservation], ++now)[0];
     expect(repeated.recognition?.state).toBe('candidate');
@@ -63,6 +65,7 @@ describe('ObjectRecognitionManager', () => {
     ], now)[0];
     expect(confirmed.recognition?.state).toBe('confirmed');
     expect(confirmed.recognizedName).toBe('Red chair');
+    expect(confirmed.appearance).toBeUndefined();
   });
 
   it('rejects tentative and low-confidence enrollment tracks', () => {
@@ -90,7 +93,7 @@ describe('ObjectRecognitionManager', () => {
     expect(unknown.recognizedName).toBeUndefined();
   });
 
-  it('persists normalized samples and reloads them', () => {
+  it('persists descriptors while exposing only sample metadata', () => {
     const directory = mkdtempSync(join(tmpdir(), 'bebop-recognition-'));
     const path = join(directory, 'recognition.json');
     try {
@@ -101,9 +104,12 @@ describe('ObjectRecognitionManager', () => {
       manager.addSample(object.id, detection('chair-1', 'chair', vector(3, -0.15), ++now));
       const raw = JSON.parse(readFileSync(path, 'utf8'));
       expect(raw.objects[0].samples).toHaveLength(3);
+      expect(raw.objects[0].samples[0].descriptor).toHaveLength(64);
 
       const reloaded = new ObjectRecognitionManager({ storagePath: path, now: () => now });
-      expect(reloaded.getStatus().objects[0].name).toBe('Desk chair');
+      const status = reloaded.getStatus();
+      expect(status.objects[0].name).toBe('Desk chair');
+      expect('descriptor' in status.objects[0].samples[0]).toBe(false);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
