@@ -67,6 +67,7 @@ interface TrackVote {
   objectId: string | null;
   confirmations: number;
   lastSeenAt: number;
+  lastObservationAt: number;
 }
 
 interface RecognitionManagerOptions {
@@ -137,6 +138,9 @@ function averageTop(values: number[], count: number): number {
 }
 
 function descriptorFor(detection: RecognizableDetection): number[] {
+  if (detection.track && detection.track.state !== 'confirmed') {
+    throw new Error(`Track ${detection.id} is not confirmed yet`);
+  }
   if (!detection.appearance) throw new Error(`Track ${detection.id} has no appearance descriptor`);
   return normalizedDescriptor(detection.appearance);
 }
@@ -275,7 +279,7 @@ export class ObjectRecognitionManager {
 
   private recognizeOne(detection: RecognizableDetection, now: number): RecognizableDetection {
     this.metrics.evaluated += 1;
-    if (!detection.appearance || detection.observed === false) {
+    if (!detection.appearance || detection.observed === false || detection.track?.state === 'tentative') {
       this.metrics.unavailable += 1;
       return {
         ...detection,
@@ -317,13 +321,17 @@ export class ObjectRecognitionManager {
     const margin = best ? best.score - (second?.score ?? 0) : null;
     const acceptable = Boolean(best && best.score >= best.object.threshold && (margin ?? 0) >= this.minimumMargin);
     const prior = this.votes.get(detection.id);
+    const isNewObservation = prior?.lastObservationAt !== detection.lastSeenAt;
     const confirmations = acceptable
-      ? prior?.objectId === best?.object.id ? prior.confirmations + 1 : 1
+      ? prior?.objectId === best?.object.id
+        ? prior.confirmations + (isNewObservation ? 1 : 0)
+        : 1
       : 0;
     this.votes.set(detection.id, {
       objectId: acceptable ? best?.object.id ?? null : null,
       confirmations,
       lastSeenAt: now,
+      lastObservationAt: detection.lastSeenAt,
     });
 
     if (!acceptable || !best) {
