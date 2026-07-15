@@ -5,7 +5,7 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 IMAGE_NAME=${PERCEPTION_IMAGE:-bebop-perception-sidecar:local}
 CALIBRATION_FILE=${PERCEPTION_CALIBRATION_FILE:-config/perception/bebop2-upstream-428x240.yaml}
 YOLOX_MODEL_PATH=/models/yolox_tiny.onnx
-if [[ "${RECOGNITION_ENABLED:-true}" == "true" ]]; then
+if [[ "${RECOGNITION_ENABLED:-false}" == "true" ]]; then
   YOLOX_MODEL_PATH=/models/disabled-in-slam-sidecar.onnx
 fi
 
