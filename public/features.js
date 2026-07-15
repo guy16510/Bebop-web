@@ -87,8 +87,11 @@ for (const input of document.querySelectorAll('[data-runtime-feature]')) {
   });
 }
 
+void import('./recognition.js').catch((error) => {
+  console.error('Named object recognition dashboard failed to load', error);
+});
+
 import('./pad-map-bridge.js')
-  .then(() => import('./recognition.js'))
   .then(() => import('./autonomy.js'))
   .then(() => import('./navigation.js'))
   .catch((error) => {
