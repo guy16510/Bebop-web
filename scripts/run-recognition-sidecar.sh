@@ -5,6 +5,7 @@ IMAGE_NAME=${PERCEPTION_IMAGE:-bebop-perception-sidecar:local}
 VIDEO_URL=${RECOGNITION_VIDEO_URL:-http://host.docker.internal:${PORT:-3000}/video.mjpeg}
 
 exec docker run --rm \
+  --entrypoint python3 \
   --add-host host.docker.internal:host-gateway \
   -e RECOGNITION_VIDEO_URL="$VIDEO_URL" \
   -e RECOGNITION_OUTPUT_HZ="${RECOGNITION_OUTPUT_HZ:-10}" \
@@ -14,4 +15,4 @@ exec docker run --rm \
   -e YOLOX_CONFIDENCE="${YOLOX_CONFIDENCE:-0.35}" \
   -e YOLOX_LOW_CONFIDENCE="${YOLOX_LOW_CONFIDENCE:-0.20}" \
   "$IMAGE_NAME" \
-  python3 /work/perception-sidecar/scripts/recognition_stream.py
+  /work/perception-sidecar/scripts/recognition_stream.py
