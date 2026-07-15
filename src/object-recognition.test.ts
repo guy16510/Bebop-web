@@ -15,35 +15,66 @@ function vector(seed: number, drift = 0): number[] {
   return raw.map((value) => value / norm);
 }
 
-function detection(id: string, label: string, appearance: number[], timestamp = 1_000): RecognizableDetection {
+function detection(
+  id: string,
+  label: string,
+  appearance: number[],
+  timestamp = 1_000,
+  options: { confidence?: number; state?: 'tentative' | 'confirmed' } = {},
+): RecognizableDetection {
   return {
     id,
     label,
-    confidence: 0.9,
+    confidence: options.confidence ?? 0.9,
     bbox: { x: 0.2, y: 0.2, width: 0.3, height: 0.4 },
     firstSeenAt: timestamp - 100,
     lastSeenAt: timestamp,
     appearance,
     observed: true,
-    track: { state: 'confirmed', ageFrames: 8, hits: 8, misses: 0 },
+    track: { state: options.state ?? 'confirmed', ageFrames: 8, hits: 8, misses: 0 },
   };
 }
 
 describe('ObjectRecognitionManager', () => {
-  it('requires diverse enrollment samples and repeated confirmations', () => {
+  it('requires diverse samples and distinct detector observations before confirmation', () => {
     let now = 1_000;
     const manager = new ObjectRecognitionManager({ now: () => now, minimumSamples: 3 });
-    const first = detection('chair-1', 'chair', vector(1));
-    const object = manager.enroll('Red chair', first);
+    const object = manager.enroll('Red chair', detection('chair-1', 'chair', vector(1), now));
     manager.addSample(object.id, detection('chair-1', 'chair', vector(1, 0.15), ++now));
     manager.addSample(object.id, detection('chair-1', 'chair', vector(1, -0.15), ++now));
 
-    const candidate = detection('chair-22', 'chair', vector(1, 0.05), ++now);
-    expect(manager.recognize([candidate], now)[0].recognition?.state).toBe('candidate');
-    expect(manager.recognize([candidate], ++now)[0].recognition?.state).toBe('candidate');
-    const confirmed = manager.recognize([candidate], ++now)[0];
+    const firstObservation = detection('chair-22', 'chair', vector(1, 0.05), ++now);
+    const first = manager.recognize([firstObservation], now)[0];
+    expect(first.recognition?.state).toBe('candidate');
+    expect(first.recognition?.confirmations).toBe(1);
+
+    const repeated = manager.recognize([firstObservation], ++now)[0];
+    expect(repeated.recognition?.state).toBe('candidate');
+    expect(repeated.recognition?.confirmations).toBe(1);
+
+    const second = manager.recognize([
+      detection('chair-22', 'chair', vector(1, 0.04), ++now),
+    ], now)[0];
+    expect(second.recognition?.state).toBe('candidate');
+    expect(second.recognition?.confirmations).toBe(2);
+
+    const confirmed = manager.recognize([
+      detection('chair-22', 'chair', vector(1, 0.03), ++now),
+    ], now)[0];
     expect(confirmed.recognition?.state).toBe('confirmed');
     expect(confirmed.recognizedName).toBe('Red chair');
+  });
+
+  it('rejects tentative and low-confidence enrollment tracks', () => {
+    const manager = new ObjectRecognitionManager({ minimumEnrollmentConfidence: 0.5 });
+    expect(() => manager.enroll(
+      'Tentative chair',
+      detection('chair-1', 'chair', vector(1), 1_000, { state: 'tentative' }),
+    )).toThrow(/not confirmed/);
+    expect(() => manager.enroll(
+      'Weak chair',
+      detection('chair-2', 'chair', vector(1), 1_000, { confidence: 0.3 }),
+    )).toThrow(/below the enrollment minimum/);
   });
 
   it('rejects wrong labels and visually different unknown objects', () => {
