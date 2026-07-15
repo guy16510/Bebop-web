@@ -5,15 +5,21 @@ ARG ORB_SLAM3_COMMIT=4452a3c4ab75b1cde34e5505a36ec3f9edcdc4c4
 ARG PANGOLIN_COMMIT=d484494645cb7361374ac0ef6b27e9ee6feffbd7
 ARG YOLOX_VERSION=0.1.1rc0
 
+# The minimal ARM64 Ubuntu image has no CA bundle and its HTTP mirror is not
+# reachable from some hosted runners. Bootstrap only ca-certificates with TLS
+# peer verification disabled; Ubuntu's signed repository metadata still
+# authenticates the package. All subsequent downloads use normal TLS checks.
 RUN sed -i 's|http://ports.ubuntu.com|https://ports.ubuntu.com|g; s|http://archive.ubuntu.com|https://archive.ubuntu.com|g; s|http://security.ubuntu.com|https://security.ubuntu.com|g' /etc/apt/sources.list \
+    && apt-get -o Acquire::Retries=5 -o Acquire::https::Verify-Peer=false -o Acquire::https::Timeout=30 update \
+    && apt-get -o Acquire::Retries=5 -o Acquire::https::Verify-Peer=false -y --no-install-recommends install ca-certificates \
+    && update-ca-certificates \
     && for attempt in 1 2 3; do \
-      apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update && break; \
+      apt-get -o Acquire::Retries=5 -o Acquire::https::Timeout=30 update && break; \
       if [ "$attempt" = 3 ]; then exit 1; fi; \
       sleep $((attempt * 5)); \
     done \
     && apt-get -o Acquire::Retries=5 -y --no-install-recommends install \
     build-essential \
-    ca-certificates \
     cmake \
     git \
     libavcodec-dev \
