@@ -1,0 +1,57 @@
+name: Implement object recognition
+
+on:
+  push:
+    branches: [feature/object-recognition]
+    paths:
+      - .github/recognition-ready
+
+permissions:
+  contents: write
+
+concurrency:
+  group: object-recognition-implementation
+  cancel-in-progress: false
+
+jobs:
+  implement:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/object-recognition
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Apply integration patch
+        run: python3 scripts/apply-object-recognition.py
+
+      - name: Validate Python sources
+        run: python3 -m py_compile perception-sidecar/scripts/recognition_stream.py scripts/apply-object-recognition.py
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Check browser JavaScript
+        run: npm run check:client
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Commit validated implementation
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .
+          git commit -m "Implement named object tracking and recognition" -m "Closes #19"
+          git push origin HEAD:feature/object-recognition
