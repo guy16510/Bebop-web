@@ -88,6 +88,7 @@ for (const input of document.querySelectorAll('[data-runtime-feature]')) {
 }
 
 import('./pad-map-bridge.js')
+  .then(() => import('./recognition.js'))
   .then(() => import('./autonomy.js'))
   .then(() => import('./navigation.js'))
   .catch((error) => {

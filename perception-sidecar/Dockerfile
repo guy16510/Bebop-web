@@ -82,9 +82,11 @@ COPY config/perception/bebop2-upstream-428x240.yaml /config/bebop2-upstream-428x
 COPY perception-sidecar/entrypoint.sh /usr/local/bin/perception-entrypoint
 RUN chmod +x /usr/local/bin/perception-entrypoint \
     /work/perception-sidecar/scripts/apriltag_stream.py \
+    /work/perception-sidecar/scripts/recognition_stream.py \
     && export LD_LIBRARY_PATH=/opt/ORB_SLAM3/lib:/opt/ORB_SLAM3/Thirdparty/DBoW2/lib:/opt/ORB_SLAM3/Thirdparty/g2o/lib:/usr/local/lib \
     && /usr/local/bin/bebop-perception-sidecar --self-test | grep -q 'perception.snapshot' \
-    && python3 /work/perception-sidecar/scripts/apriltag_stream.py --self-test | grep -q 'apriltag-7'
+    && python3 /work/perception-sidecar/scripts/apriltag_stream.py --self-test | grep -q 'apriltag-7' \
+    && python3 /work/perception-sidecar/scripts/recognition_stream.py --self-test | grep -q '"ok": true'
 
 ENV ORB_VOCABULARY=/opt/ORB_SLAM3/Vocabulary/ORBvoc.txt \
     ORB_SETTINGS=/config/bebop2.yaml \

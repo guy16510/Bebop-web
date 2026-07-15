@@ -5,7 +5,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { z } from 'zod';
 import pino from 'pino';
 import { createDroneAdapter } from './drone-adapters.js';
-import { PerceptionManager, type PerceptionBackend } from './perception.js';
+import { PerceptionManager, type PerceptionBackend, type PerceptionSnapshot } from './perception.js';
 import { clampCommand, ZERO_COMMAND, type PilotingCommand } from './types.js';
 import { MjpegVideoManager } from './video.js';
 import { RawVideoManager, defaultCapturePath } from './raw-video.js';
@@ -16,6 +16,8 @@ import {
   type RuntimeFeatureStatus,
 } from './runtime-features.js';
 import type { MappingAutostartStatus } from './mapping-autostart.js';
+import { ObjectRecognitionManager, type RecognizableDetection } from './object-recognition.js';
+import { RecognitionVisionManager } from './recognition-vision.js';
 
 const log = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 const port = Number(process.env.PORT ?? 3000);
@@ -78,6 +80,37 @@ function broadcast(payload: unknown): void {
   }
 }
 
+const objectRecognition = new ObjectRecognitionManager({
+  storagePath: process.env.RECOGNITION_REGISTRY_FILE ?? '.bebop/recognition.json',
+  minimumSamples: Number(process.env.RECOGNITION_MINIMUM_SAMPLES ?? 3),
+  maximumSamplesPerObject: Number(process.env.RECOGNITION_MAXIMUM_SAMPLES ?? 48),
+  minimumMargin: Number(process.env.RECOGNITION_MINIMUM_MARGIN ?? 0.04),
+});
+let latestRecognizedDetections: RecognizableDetection[] = [];
+let latestRecognitionTimestamp = 0;
+const recognitionVision = new RecognitionVisionManager({
+  command: process.env.RECOGNITION_COMMAND ?? 'bash scripts/run-recognition-sidecar.sh',
+  enabled: envBoolean('RECOGNITION_ENABLED', droneMode === 'bebop'),
+  restartMs: Number(process.env.RECOGNITION_RESTART_MS ?? 2_000),
+  onUpdate: (snapshot) => {
+    latestRecognitionTimestamp = snapshot.timestamp;
+    latestRecognizedDetections = objectRecognition.recognize(snapshot.detections, snapshot.timestamp);
+    broadcastPerceptionStatus();
+  },
+});
+const recognitionStaleMs = Number(process.env.RECOGNITION_STALE_MS ?? 1_500);
+
+function recognitionFresh(now = Date.now()): boolean {
+  const health = recognitionVision.getHealth();
+  return health.state === 'running'
+    && health.lastUpdateAt !== null
+    && now - health.lastUpdateAt <= recognitionStaleMs;
+}
+
+function enrichedPerceptionSnapshot(base: PerceptionSnapshot): PerceptionSnapshot {
+  return { ...base, detections: recognitionFresh() ? latestRecognizedDetections : base.detections };
+}
+
 const perception = new PerceptionManager({
   backend: perceptionBackend,
   command: process.env.PERCEPTION_COMMAND,
@@ -86,22 +119,65 @@ const perception = new PerceptionManager({
   maxLandmarks: Number(process.env.PERCEPTION_MAX_LANDMARKS ?? 2_500),
   videoUrl: process.env.PERCEPTION_VIDEO_URL ?? `http://127.0.0.1:${port}/video.mjpeg`,
   stateUrl: process.env.PERCEPTION_STATE_URL ?? `http://127.0.0.1:${port}/api/state`,
-  onUpdate: (snapshot, health) => broadcast({ type: 'perception.status', snapshot, health }),
+  onUpdate: (snapshot, health) => broadcast({
+    type: 'perception.status',
+    snapshot: enrichedPerceptionSnapshot(snapshot),
+    health,
+    recognition: recognitionStatus(),
+  }),
 });
 
-function perceptionStatus(): {
-  snapshot: ReturnType<PerceptionManager['getSnapshot']>;
-  health: ReturnType<PerceptionManager['getHealth']>;
-} {
-  return { snapshot: perception.getSnapshot(), health: perception.getHealth() };
+function recognitionStatus() {
+  return {
+    registry: objectRecognition.getStatus(),
+    vision: recognitionVision.getHealth(),
+    sourceTimestamp: latestRecognitionTimestamp,
+    fresh: recognitionFresh(),
+    liveDetections: structuredClone(latestRecognizedDetections),
+  };
+}
+
+function perceptionStatus() {
+  return {
+    snapshot: enrichedPerceptionSnapshot(perception.getSnapshot()),
+    health: perception.getHealth(),
+    recognition: recognitionStatus(),
+  };
+}
+
+function broadcastPerceptionStatus(): void {
+  broadcast({ type: 'perception.status', ...perceptionStatus() });
+}
+
+function currentRecognitionTrack(trackId: string): RecognizableDetection {
+  const detection = recognitionVision.getSnapshot().detections.find((item) => item.id === trackId);
+  if (!detection) throw new Error(`Live recognition track ${trackId} was not found`);
+  if (Date.now() - detection.lastSeenAt > recognitionStaleMs) throw new Error(`Live recognition track ${trackId} is stale`);
+  return detection;
+}
+
+function refreshRecognitionMatches(): void {
+  const snapshot = recognitionVision.getSnapshot();
+  latestRecognitionTimestamp = snapshot.timestamp;
+  objectRecognition.resetTrackConfirmations();
+  latestRecognizedDetections = objectRecognition.recognize(snapshot.detections, snapshot.timestamp || Date.now());
+  broadcastPerceptionStatus();
 }
 
 async function runPerceptionAction(
   action: 'start' | 'stop' | 'reset',
 ): Promise<ReturnType<typeof perceptionStatus>> {
-  if (action === 'start') await perception.start();
-  else if (action === 'stop') await perception.stop();
-  else perception.reset();
+  if (action === 'start') {
+    await perception.start();
+    recognitionVision.start();
+  } else if (action === 'stop') {
+    await Promise.all([perception.stop(), recognitionVision.stop()]);
+  } else {
+    perception.reset();
+    objectRecognition.resetTrackConfirmations();
+    await recognitionVision.stop();
+    recognitionVision.start();
+  }
   return perceptionStatus();
 }
 
@@ -199,6 +275,7 @@ app.get('/api/health', (_req, res) => res.json({
   mode: droneMode,
   perceptionBackend,
   features: features.getStatus(),
+  recognition: recognitionStatus(),
 }));
 app.get('/api/state', (_req, res) => res.json(adapter.getSnapshot()));
 app.get('/api/safety', (_req, res) => res.json(safety.getStatus(adapter.getSnapshot())));
@@ -260,6 +337,55 @@ app.post('/api/perception/:action', async (req, res) => {
     const message = error instanceof Error ? error.message : String(error);
     log.error({ action: req.params.action, error: message }, 'Perception action failed');
     res.status(500).json({ error: message, ...perceptionStatus() });
+  }
+});
+
+const recognitionEnrollSchema = z.object({ name: z.string().trim().min(1).max(128), trackId: z.string().min(1).max(128) });
+const recognitionSampleSchema = z.object({ trackId: z.string().min(1).max(128) });
+const recognitionUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(128).optional(),
+  labels: z.array(z.string().trim().min(1).max(128)).min(1).max(16).optional(),
+  enabled: z.boolean().optional(),
+  threshold: z.number().finite().min(0.45).max(0.99).optional(),
+  minimumConfirmations: z.number().int().min(1).max(12).optional(),
+}).strict().refine((value) => Object.keys(value).length > 0, { message: 'At least one update is required' });
+app.get('/api/recognition/status', (_req, res) => res.json(recognitionStatus()));
+app.post('/api/recognition/objects', (req, res) => {
+  try {
+    const input = recognitionEnrollSchema.parse(req.body);
+    const object = objectRecognition.enroll(input.name, currentRecognitionTrack(input.trackId));
+    refreshRecognitionMatches();
+    res.status(201).json({ object, ...recognitionStatus() });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error), ...recognitionStatus() });
+  }
+});
+app.post('/api/recognition/objects/:objectId/samples', (req, res) => {
+  try {
+    const input = recognitionSampleSchema.parse(req.body);
+    const object = objectRecognition.addSample(req.params.objectId, currentRecognitionTrack(input.trackId));
+    refreshRecognitionMatches();
+    res.json({ object, ...recognitionStatus() });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error), ...recognitionStatus() });
+  }
+});
+app.post('/api/recognition/objects/:objectId', (req, res) => {
+  try {
+    const object = objectRecognition.update(req.params.objectId, recognitionUpdateSchema.parse(req.body));
+    refreshRecognitionMatches();
+    res.json({ object, ...recognitionStatus() });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error), ...recognitionStatus() });
+  }
+});
+app.delete('/api/recognition/objects/:objectId', (req, res) => {
+  try {
+    objectRecognition.remove(req.params.objectId);
+    refreshRecognitionMatches();
+    res.json(recognitionStatus());
+  } catch (error) {
+    res.status(404).json({ error: error instanceof Error ? error.message : String(error), ...recognitionStatus() });
   }
 });
 
@@ -424,7 +550,7 @@ wss.on('connection', (socket) => {
         case 'drone.disconnect':
           safety.disarm();
           stopPiloting();
-          await Promise.allSettled([video.stop(), rawVideo.stop(), perception.stop()]);
+          await Promise.allSettled([video.stop(), rawVideo.stop(), perception.stop(), recognitionVision.stop()]);
           await adapter.disconnect();
           broadcastSafety();
           break;
@@ -477,12 +603,16 @@ wss.on('connection', (socket) => {
           break;
         case 'perception.start':
           await perception.start();
+          recognitionVision.start();
           break;
         case 'perception.stop':
-          await perception.stop();
+          await Promise.all([perception.stop(), recognitionVision.stop()]);
           break;
         case 'perception.reset':
           perception.reset();
+          objectRecognition.resetTrackConfirmations();
+          await recognitionVision.stop();
+          recognitionVision.start();
           break;
         case 'features.set':
           updateFeatures(message.settings, 'web');
@@ -562,7 +692,7 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
   log.info({ signal }, 'Shutting down Bebop web server');
   safety.disarm();
   stopPiloting();
-  await Promise.allSettled([video.stop(), rawVideo.stop(), perception.stop()]);
+  await Promise.allSettled([video.stop(), rawVideo.stop(), perception.stop(), recognitionVision.stop()]);
   await adapter.disconnect().catch(() => undefined);
   server.close(() => process.exit(0));
 }
