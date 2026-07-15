@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -110,6 +110,25 @@ describe('ObjectRecognitionManager', () => {
       const status = reloaded.getStatus();
       expect(status.objects[0].name).toBe('Desk chair');
       expect('descriptor' in status.objects[0].samples[0]).toBe(false);
+      expect(status.lastError).toBeNull();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed and recovers from a malformed registry file', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'bebop-recognition-corrupt-'));
+    const path = join(directory, 'recognition.json');
+    try {
+      writeFileSync(path, '{broken json', 'utf8');
+      const manager = new ObjectRecognitionManager({ storagePath: path });
+      expect(manager.getStatus().objects).toEqual([]);
+      expect(manager.getStatus().lastError).toMatch(/JSON/);
+
+      const object = manager.enroll('Recovered chair', detection('chair-1', 'chair', vector(4)));
+      expect(object.name).toBe('Recovered chair');
+      expect(manager.getStatus().lastError).toBeNull();
+      expect(JSON.parse(readFileSync(path, 'utf8')).objects).toHaveLength(1);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
