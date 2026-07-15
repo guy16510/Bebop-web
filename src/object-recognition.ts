@@ -71,6 +71,7 @@ export interface RecognitionRegistryStatus {
   updatedAt: number;
   storagePath: string | null;
   minimumSamples: number;
+  lastError: string | null;
   objects: RecognitionObjectStatus[];
   metrics: {
     evaluated: number;
@@ -122,10 +123,6 @@ const registrySchema = z.object({
   updatedAt: z.number().int().nonnegative().default(0),
   objects: z.array(objectSchema).default([]),
 });
-
-function clone<T>(value: T): T {
-  return structuredClone(value);
-}
 
 function cleanId(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
@@ -199,6 +196,7 @@ export class ObjectRecognitionManager {
   private revision = 0;
   private updatedAt = 0;
   private loadedMtimeMs = 0;
+  private lastError: string | null = null;
   private readonly votes = new Map<string, TrackVote>();
   private metrics = { evaluated: 0, confirmed: 0, candidates: 0, unknown: 0, unavailable: 0 };
 
@@ -222,6 +220,7 @@ export class ObjectRecognitionManager {
       updatedAt: this.updatedAt,
       storagePath: this.storagePath ?? null,
       minimumSamples: this.minimumSamples,
+      lastError: this.lastError,
       objects: this.objects.map(publicObject),
       metrics: { ...this.metrics },
     };
@@ -430,17 +429,24 @@ export class ObjectRecognitionManager {
 
   private reload(force: boolean): void {
     if (!this.storagePath || !existsSync(this.storagePath)) return;
-    const mtimeMs = statSync(this.storagePath).mtimeMs;
-    if (!force && mtimeMs <= this.loadedMtimeMs) return;
-    const parsed = registrySchema.parse(JSON.parse(readFileSync(this.storagePath, 'utf8')));
-    this.revision = parsed.revision;
-    this.updatedAt = parsed.updatedAt;
-    this.objects = parsed.objects.map((object) => ({
-      ...object,
-      labels: cleanLabels(object.labels),
-      samples: object.samples.map((sample) => ({ ...sample, descriptor: normalizedDescriptor(sample.descriptor) })),
-    }));
-    this.loadedMtimeMs = mtimeMs;
+    let observedMtimeMs: number | null = null;
+    try {
+      observedMtimeMs = statSync(this.storagePath).mtimeMs;
+      if (!force && observedMtimeMs <= this.loadedMtimeMs) return;
+      const parsed = registrySchema.parse(JSON.parse(readFileSync(this.storagePath, 'utf8')));
+      this.revision = parsed.revision;
+      this.updatedAt = parsed.updatedAt;
+      this.objects = parsed.objects.map((object) => ({
+        ...object,
+        labels: cleanLabels(object.labels),
+        samples: object.samples.map((sample) => ({ ...sample, descriptor: normalizedDescriptor(sample.descriptor) })),
+      }));
+      this.loadedMtimeMs = observedMtimeMs;
+      this.lastError = null;
+    } catch (error) {
+      if (observedMtimeMs !== null) this.loadedMtimeMs = observedMtimeMs;
+      this.lastError = error instanceof Error ? error.message : String(error);
+    }
   }
 
   private commit(): void {
@@ -457,6 +463,7 @@ export class ObjectRecognitionManager {
       renameSync(temporary, this.storagePath);
       this.loadedMtimeMs = statSync(this.storagePath).mtimeMs;
     }
+    this.lastError = null;
     this.options.onChange?.(this.getStatus());
   }
 }
