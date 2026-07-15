@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { RecognitionVisionManager } from './recognition-vision.js';
 
 function detection(id: string, confidence: number, state: 'tentative' | 'confirmed') {
@@ -16,11 +16,8 @@ function detection(id: string, confidence: number, state: 'tentative' | 'confirm
   };
 }
 
-afterEach(() => vi.unstubAllEnvs());
-
 describe('RecognitionVisionManager', () => {
-  it('publishes only confirmed detections above the enrollment confidence floor', async () => {
-    vi.stubEnv('RECOGNITION_MINIMUM_CONFIDENCE', '0.5');
+  it('preserves tentative and low-confidence detections for generic flight safety', async () => {
     const payload = JSON.stringify({
       type: 'recognition-vision.snapshot',
       timestamp: 1_100,
@@ -49,7 +46,11 @@ describe('RecognitionVisionManager', () => {
 
     expect(manager.getHealth().state).toBe('running');
     expect(manager.getHealth().activeTracks).toBe(3);
-    expect(manager.getSnapshot().detections.map((item) => item.id)).toEqual(['chair-ready']);
+    expect(manager.getSnapshot().detections.map((item) => item.id)).toEqual([
+      'chair-tentative',
+      'chair-low',
+      'chair-ready',
+    ]);
     await manager.stop();
   });
 
