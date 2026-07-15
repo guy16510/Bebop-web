@@ -4,9 +4,9 @@ set -euo pipefail
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 IMAGE_NAME=${PERCEPTION_IMAGE:-bebop-perception-sidecar:local}
 CALIBRATION_FILE=${PERCEPTION_CALIBRATION_FILE:-config/perception/bebop2-upstream-428x240.yaml}
-YOLOX_MODEL_PATH=/models/yolox_tiny.onnx
+DETECTION_INTERVAL=${DETECTION_EVERY_N_FRAMES:-3}
 if [[ "${RECOGNITION_ENABLED:-false}" == "true" ]]; then
-  YOLOX_MODEL_PATH=/models/disabled-in-slam-sidecar.onnx
+  DETECTION_INTERVAL=${PERCEPTION_FALLBACK_DETECTION_EVERY_N_FRAMES:-10}
 fi
 
 if [[ "$CALIBRATION_FILE" != /* ]]; then
@@ -23,9 +23,9 @@ exec docker run --rm -i \
   --add-host host.docker.internal:host-gateway \
   -e PERCEPTION_CAMERA_CALIBRATED=true \
   -e PERCEPTION_OUTPUT_HZ="${PERCEPTION_OUTPUT_HZ:-10}" \
-  -e DETECTION_EVERY_N_FRAMES="${DETECTION_EVERY_N_FRAMES:-3}" \
+  -e DETECTION_EVERY_N_FRAMES="$DETECTION_INTERVAL" \
   -e YOLOX_CONFIDENCE="${YOLOX_CONFIDENCE:-0.35}" \
-  -e YOLOX_MODEL="$YOLOX_MODEL_PATH" \
+  -e YOLOX_MODEL=/models/yolox_tiny.onnx \
   -e OBJECT_POSITION_ESTIMATE="${OBJECT_POSITION_ESTIMATE:-false}" \
   -v "$CALIBRATION_FILE:/config/bebop2.yaml:ro" \
   "$IMAGE_NAME"
